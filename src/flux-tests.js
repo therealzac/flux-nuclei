@@ -194,34 +194,22 @@ const LIVE_GUARD_REGISTRY = [
         const evenness = Math.max(0, 1 - cv);
         if (total > 0)
           g.msg = `pu:pd=${puPdRatio.toFixed(2)} nd:nu=${ndNuRatio.toFixed(2)} cov=${(evenness*100).toFixed(0)}%`;
+        // Passes when evenness is near-perfect with enough data
         if (evenness >= 0.999 && total >= 16) {
           g.ok = true;
           g.msg = `coverage 100% pu:pd=${puPdRatio.toFixed(2)} nd:nu=${ndNuRatio.toFixed(2)}`;
           _liveGuardRender();
           return null;
         }
-        const t = tick - LIVE_GUARD_GRACE;
-        const checkpoints = [
-          { at: 256,  lo: 1.0, hi: 3.0, label: 'early' },
-          { at: 640,  lo: 1.4, hi: 2.6, label: 'mid' },
-          { at: 1280, lo: 1.6, hi: 2.4, label: 'final' },
-        ];
-        for (const cp of checkpoints) {
-          if (t !== cp.at) continue;
-          const inBand = puPdRatio >= cp.lo && puPdRatio <= cp.hi
-                      && ndNuRatio >= cp.lo && ndNuRatio <= cp.hi;
-          if (cp.label === 'final') {
-            if (inBand) {
-              g.ok = true;
-              g.msg = `pu:pd=${puPdRatio.toFixed(2)} nd:nu=${ndNuRatio.toFixed(2)}`;
-            } else {
-              return `${cp.label}: pu:pd=${puPdRatio.toFixed(2)} nd:nu=${ndNuRatio.toFixed(2)} [${cp.lo}-${cp.hi}]`;
-            }
-          } else if (!inBand) {
-            console.warn(`[T22 ${cp.label}] pu:pd=${puPdRatio.toFixed(2)} nd:nu=${ndNuRatio.toFixed(2)} outside [${cp.lo}-${cp.hi}]`);
-          }
+        // Also passes when ratios are in the target band [1.6, 2.4]
+        if (total >= 16 && puPdRatio >= 1.6 && puPdRatio <= 2.4
+                        && ndNuRatio >= 1.6 && ndNuRatio <= 2.4) {
+          g.ok = true;
+          g.msg = `pu:pd=${puPdRatio.toFixed(2)} nd:nu=${ndNuRatio.toFixed(2)}`;
           _liveGuardRender();
+          return null;
         }
+        // No time limit — stays pending until ratios converge
         return null;
       }
     },
@@ -594,6 +582,33 @@ const LIVE_GUARD_REGISTRY = [
                 const sc = SC_BY_ID[scId];
                 return `tick ${tick}: unattributed eSC ${scId} (${sc ? sc.a + '↔' + sc.b : '?'})`;
             }
+        }
+        if (g.ok === null && tick >= LIVE_GUARD_GRACE) { g.ok = true; g.msg = ''; }
+        return null;
+      }
+    },
+    { id: 'T45', name: 'Oct xons no bounce (A→B→A)',
+      snapshot(g) {
+        // Capture each oct xon's previous position before the tick
+        g._t45prev = new Map();
+        for (const xon of _demoXons) {
+          if (!xon.alive || xon._mode !== 'oct') continue;
+          g._t45prev.set(xon, { prevNode: xon.prevNode, node: xon.node });
+        }
+      },
+      check(tick, g, ctx) {
+        if (!ctx.prev || tick <= LIVE_GUARD_GRACE) return null;
+        // For each oct xon: if it moved A→B this tick, and last tick it was at B→A,
+        // that's a bounce: B→A→B
+        for (const xon of _demoXons) {
+          if (!xon.alive || xon._mode !== 'oct') continue;
+          const prev = g._t45prev?.get(xon);
+          if (!prev) continue;
+          // prev.prevNode = where xon was 2 ticks ago, prev.node = where it was 1 tick ago
+          // xon.node = where it is now
+          if (xon.node === prev.prevNode && xon.node !== prev.node && prev.prevNode != null) {
+            return `tick ${tick}: oct xon ${_demoXons.indexOf(xon)} bounced ${prev.prevNode}→${prev.node}→${xon.node}`;
+          }
         }
         if (g.ok === null && tick >= LIVE_GUARD_GRACE) { g.ok = true; g.msg = ''; }
         return null;

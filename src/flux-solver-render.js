@@ -515,6 +515,8 @@ function _solve(scPairs,iters=5000,noBailout=false){
             return { p: cached.p.map(v=>[v[0],v[1],v[2]]), converged: cached.converged };
         }
     }
+    // Worker sync path removed — Atomics.wait not available on Chrome main thread.
+    // Batch pre-solve via SolverProxy.solveBatch() is async (used by PHASE 2).
     const p=REST.map(v=>[...v]);
     const C=[...BASE_EDGES.map(([i,j])=>({i,j,d:1})),...sortedSC.map(([i,j])=>({i,j,d:1}))];
     let mx=0, mx50=Infinity;
@@ -860,6 +862,7 @@ function updateLatticeLevel(){
     selectedVert=-1; hoveredVert=-1; hoveredSC=-1;
     rebuildLatticeGeometry(latticeLevel);
     _solveCache = { key: -1, len: -1, result: null }; // invalidate solve cache
+    if(typeof SolverProxy!=='undefined') SolverProxy.initLattice();
     rebuildScPairLookup();
     rebuildSphereMeshes();
     // Force full rebuild (lattice geometry changed — edge count differs)

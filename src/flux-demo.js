@@ -1151,6 +1151,8 @@ function _getOctCandidates(xon, occupied, blocked) {
     for (const nb of allOctNeighbors) {
         if (occupied.has(nb.node)) continue; // Pauli: already occupied
         if (blocked && blocked.has(nb.node)) continue; // Pauli: reserved by another planned move
+        // No bouncing: don't go back to the node we just came from
+        if (nb.node === xon.prevNode && xon.prevNode !== xon.node) continue;
         if (xon._lastDir === null || xon.prevNode === xon.node) {
             candidates.push({ node: nb.node, dirIdx: nb.dirIdx, score: 1, _scId: nb._scId, _needsMaterialise: nb._needsMaterialise });
         } else {
@@ -1206,6 +1208,10 @@ function _getOctCandidates(xon, occupied, blocked) {
 // Execute an oct move to a specific target. Handles vacuum negotiation.
 // Returns true if the move succeeded, false if vacuum rejected.
 function _executeOctMove(xon, target) {
+    // T45: anti-bounce guard — reject move back to prevNode
+    if (xon._mode === 'oct' && target.node === xon.prevNode && xon.prevNode !== xon.node) {
+        return false;
+    }
     // Re-check SC activation at execution time (may have changed since planning)
     if (target._scId !== undefined) {
         const stillActive = activeSet.has(target._scId) || impliedSet.has(target._scId) || xonImpliedSet.has(target._scId);
@@ -3019,6 +3025,8 @@ function demoTick() {
                 return _lookahead(nb.node, tmp, 1);
             });
         for (const nb of freeOctNbs) {
+            // T45: anti-bounce — don't go back to prevNode
+            if (nb.node === xon.prevNode && xon.prevNode !== xon.node) continue;
             const fromRet = xon.node;
             _occDel(occupied, xon.node);
             xon.prevNode = xon.node;
@@ -3327,6 +3335,8 @@ function demoTick() {
         // ONLY 2-step-aware destinations are valid
         const scored = candidates
             .filter(n => !(occupied.get(n) || 0))
+            // T45: anti-bounce — don't go back to prevNode
+            .filter(n => !(n === xon.prevNode && xon.prevNode !== xon.node))
             // T41: reject destinations that would create a swap
             .filter(n => !_swapBlocked(xon.node, n))
             .filter(n => {
