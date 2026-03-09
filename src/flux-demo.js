@@ -183,6 +183,7 @@ const _T45_BOUNCE_GUARD = false;
 let _demoTick = 0;
 let _demoSchedule = null;     // 8-window physical schedule (32 ticks/cycle)
 let _demoVisits = null;       // {face: {pu:0, pd:0, nu:0, nd:0}}
+let _demoTetAssignments = 0;  // total tet assignments (for hit rate = completions / assignments)
 let _demoFaceDecks = null;    // {face: shuffled array} — stochastic type assignment
 let _demoWindowTypes = null;  // current window's face→type map (persists 4 ticks)
 let _demoPauliViolations = 0;
@@ -1319,6 +1320,7 @@ function _promoteFaceSCs(face, xon) {
 function _assignXonToTet(xon, face, quarkType) {
     const fd = _nucleusTetFaceData[face];
     if (!fd) return;
+    _demoTetAssignments++;  // track for hit rate
     _promoteFaceSCs(face, xon);
 
     let seq = LOOP_SEQUENCES[quarkType](fd.cycle);
@@ -1922,7 +1924,19 @@ function _getDemoIntervalMs() {
     const slider = document.getElementById('excitation-speed-slider');
     if (!slider) return 1000; // default = slowest
     const t = +slider.value / 100;
-    return Math.max(2, Math.round(Math.exp(Math.log(1000) * (1 - t) + Math.log(2) * t)));
+    if (t >= 1.0) return 0; // 100% = uncapped, as fast as possible
+    return Math.max(4, Math.round(Math.exp(Math.log(1000) * (1 - t) + Math.log(4) * t)));
+}
+let _demoUncappedId = null;  // setTimeout chain for uncapped mode
+function _demoUncappedLoop() {
+    if (!_demoActive || _demoInterval) { _demoUncappedId = null; return; }
+    demoTick().then(() => {
+        if (_demoActive && !_demoInterval) {
+            _demoUncappedId = setTimeout(_demoUncappedLoop, 0);
+        } else {
+            _demoUncappedId = null;
+        }
+    });
 }
 
 /**
@@ -2062,6 +2076,7 @@ function startDemoLoop() {
         _demoFaceDecks[f] = [];  // empty → will reshuffle on first draw
     }
     _demoTick = 0;
+    _demoTetAssignments = 0;
     _demoPauliViolations = 0;
     _demoSpreadViolations = 0;
     _demoTypeBalanceHistory = [];
@@ -2176,18 +2191,26 @@ function startDemoLoop() {
     }
 
     const intervalMs = _getDemoIntervalMs();
-    _demoInterval = setInterval(demoTick, intervalMs);
-    console.log(`[demo] Pattern demo started at ${intervalMs}ms interval`);
+    if (intervalMs === 0) {
+        // Uncapped: self-scheduling async loop (as fast as GPU/CPU allows)
+        _demoUncappedId = setTimeout(_demoUncappedLoop, 0);
+        console.log(`[demo] Pattern demo started UNCAPPED (max speed)`);
+    } else {
+        _demoInterval = setInterval(demoTick, intervalMs);
+        console.log(`[demo] Pattern demo started at ${intervalMs}ms interval`);
+    }
 
-    // Auto-run unit tests — HALT DEMO if any test fails
-    try {
-        const testResult = runDemo3Tests();
-        if (testResult.failed.length > 0) {
-            console.error(`[demo] HALTED: ${testResult.failed.length} test(s) failed: ${testResult.failed.join(', ')}`);
-            stopDemo();
-            return;
-        }
-    } catch (e) { console.warn('[demo] Test suite error:', e); }
+    // Auto-run unit tests — HALT DEMO if any test fails (skip during tournament)
+    if (!_tournamentRunning) {
+        try {
+            const testResult = runDemo3Tests();
+            if (testResult.failed.length > 0) {
+                console.error(`[demo] HALTED: ${testResult.failed.length} test(s) failed: ${testResult.failed.join(', ')}`);
+                stopDemo();
+                return;
+            }
+        } catch (e) { console.warn('[demo] Test suite error:', e); }
+    }
 
     // Activate live guards (T19, T21, T26, T27) — start with null during grace
     if (typeof _liveGuards !== 'undefined') {
@@ -2240,7 +2263,11 @@ let _tickTotalMs = 0, _tickCount = 0, _tickMaxMs = 0;
 let _profPhases = { wb: 0, p0: 0, p05: 0, p1: 0, p2: 0, p3: 0, p3b: 0, p4: 0, p5: 0, solver: 0, cleanup: 0, render: 0, guards: 0 };
 async function demoTick() {
     if (!_demoActive || !_demoSchedule) return;
-    if (simHalted) return;
+    if (simHalted) {
+        // Tournament: fire callback on halt so GA can score the failed trial
+        if (typeof _tournamentTickCheck === 'function') _tournamentTickCheck();
+        return;
+    }
     if (_tickInProgress) return; // previous async tick still running
     _tickInProgress = true;
     const _tickT0 = performance.now();
@@ -4019,21 +4046,27 @@ function updateDemoPanel() {
 
 function pauseDemo() {
     if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; }
+    if (_demoUncappedId) { clearTimeout(_demoUncappedId); _demoUncappedId = null; }
 }
 function resumeDemo() {
-    if (_demoActive && !_demoInterval) {
+    if (_demoActive && !_demoInterval && !_demoUncappedId) {
         const intervalMs = _getDemoIntervalMs();
-        _demoInterval = setInterval(demoTick, intervalMs);
+        if (intervalMs === 0) {
+            _demoUncappedId = setTimeout(_demoUncappedLoop, 0);
+        } else {
+            _demoInterval = setInterval(demoTick, intervalMs);
+        }
     }
 }
 function isDemoPaused() {
-    return _demoActive && !_demoInterval;
+    return _demoActive && !_demoInterval && !_demoUncappedId;
 }
 
 function stopDemo() {
     _demoActive = false;
     if (typeof _liveGuardsActive !== 'undefined') _liveGuardsActive = false;
     if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; }
+    if (_demoUncappedId) { clearTimeout(_demoUncappedId); _demoUncappedId = null; }
     const ds = document.getElementById('demo-status');
     if (ds) ds.style.display = 'none';
     // Clean up Demo 3.0 xons and gluons

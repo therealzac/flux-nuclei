@@ -480,6 +480,8 @@ const LIVE_GUARD_REGISTRY = [
     { id: 'T39', name: 'Demo opacity reset', convergence: true,
       check(tick, g) {
         if (tick !== LIVE_GUARD_GRACE + 1) return null;
+        // Skip during tournament — visual presets are overridden
+        if (_tournamentRunning) { g.ok = true; g.msg = 'tournament'; _liveGuardRender(); return null; }
         const expectedSliders = {
           'sphere-opacity-slider': 3, 'void-opacity-slider': 5,
           'graph-opacity-slider': 21, 'trail-opacity-slider': 55,
@@ -1251,18 +1253,19 @@ function _evaluateFitness() {
 
     const distPuPd = 1 - Math.min(1, Math.abs(puPd - 2.0) / 2.0);
     const distNdNu = 1 - Math.min(1, Math.abs(ndNu - 2.0) / 2.0);
-    // Hadronic balance score: how close ratios are to 2:1 targets + evenness
-    const balance = distPuPd + distNdNu + evenness * 0.3;
+    // Hit rate: completions / assignments (how often does assignment → actualized tet?)
+    const hitRate = _demoTetAssignments > 0 ? total / _demoTetAssignments : 0;
+    // Fitness = ratio accuracy + evenness + hit rate
+    // distPuPd, distNdNu ∈ [0,1], evenness ∈ [0,1], hitRate ∈ [0,1]
+    // Weights: 30% puPd + 30% ndNu + 20% evenness + 20% hitRate = max 1.0
+    const balance = distPuPd * 0.3 + distNdNu * 0.3 + evenness * 0.2 + hitRate * 0.2;
     // Fitness tiers: clean survivors > failed candidates > zero-visit candidates
-    // Clean candidates get balance (0 to 2.3 range)
-    // Failed candidates get balance - 10 (always below clean)
-    // Zero-visit candidates get -20 (always worst)
     let fitness;
     if (total === 0) fitness = -20;
     else if (anyFail) fitness = balance - 10;
     else fitness = balance;
 
-    return { puPd, ndNu, evenness, totalVisits: total, fitness, failedGuards, survivedTicks: _demoTick, clean: !anyFail && total > 0 };
+    return { puPd, ndNu, evenness, hitRate, totalVisits: total, assignments: _demoTetAssignments, fitness, failedGuards, survivedTicks: _demoTick, clean: !anyFail && total > 0 };
 }
 
 // Hook into demoTick to detect when trial reaches target tick.
@@ -1290,6 +1293,29 @@ function _tournamentTickCheck() {
 }
 
 // Start a visual trial: apply params, start demo, resolve when target tick reached.
+function _applyTournamentVisuals() {
+    // Tournament visual presets: clean view focused on xon choreography
+    const presets = {
+        'sphere-opacity-slider': 5,    // spheres: 5%
+        'void-opacity-slider': 34,     // shapes: 34%
+        'graph-opacity-slider': 34,    // graph: 34%
+        'trail-opacity-slider': 100,   // xons: 100%
+        'tracer-lifespan-slider': 34,  // lifespan: 34
+    };
+    for (const [id, val] of Object.entries(presets)) {
+        const el = document.getElementById(id);
+        if (el) { el.value = val; el.dispatchEvent(new Event('input')); }
+    }
+    // Orbit: enable at 34% rate
+    const orbitSlider = document.getElementById('orbit-speed-slider');
+    if (orbitSlider) { orbitSlider.value = 34; orbitSlider.dispatchEvent(new Event('input')); }
+    if (typeof _autoOrbit !== 'undefined') _autoOrbit = true;
+    const orbitVal = document.getElementById('orbit-speed-val');
+    if (orbitVal) { orbitVal.textContent = '34%'; orbitVal.style.color = '#9abccc'; }
+    const orbitToggle = document.getElementById('orbit-toggle');
+    if (orbitToggle) orbitToggle.style.color = '#d4a054';
+}
+
 function _startVisualTrial(params, maxTicks) {
     return new Promise((resolve) => {
         // Stop any existing demo cleanly
@@ -1299,10 +1325,10 @@ function _startVisualTrial(params, maxTicks) {
         // Apply candidate params
         Object.assign(_choreoParams, params);
 
-        // Force L2 lattice — L1 is too small for deuteron simulation
+        // Force L3 lattice — more geometry for richer tournament dynamics
         const slider = document.getElementById('lattice-slider');
-        if (slider && +slider.value !== 2) {
-            slider.value = 2;
+        if (slider && +slider.value !== 3) {
+            slider.value = 3;
             if (typeof updateLatticeLevel === 'function') updateLatticeLevel();
         }
 
@@ -1318,6 +1344,9 @@ function _startVisualTrial(params, maxTicks) {
 
         // Start the demo — it will run visually using the normal animation loop
         startDemoLoop();
+
+        // Apply tournament visual presets AFTER startDemoLoop (which sets T39 defaults)
+        _applyTournamentVisuals();
     });
 }
 
@@ -1408,7 +1437,7 @@ async function _runTournament() {
         const top = results[0];
         const cleanCount = results.filter(r => r.clean).length;
         const failStr = top.failedGuards?.length ? ` FAIL[${top.failedGuards.join(',')}]@${top.survivedTicks}` : ` survived ${top.survivedTicks}`;
-        console.log(`[Tournament] Gen ${gen + 1}: best=${top.fitness.toFixed(3)} pu:pd=${top.puPd.toFixed(2)} nd:nu=${top.ndNu.toFixed(2)} even=${top.evenness.toFixed(2)} visits=${top.totalVisits}${failStr} (${cleanCount}/${POP_SIZE} clean)`, top.params);
+        console.log(`[Tournament] Gen ${gen + 1}: best=${top.fitness.toFixed(3)} pu:pd=${top.puPd.toFixed(2)} nd:nu=${top.ndNu.toFixed(2)} even=${top.evenness.toFixed(2)} hit=${(top.hitRate*100).toFixed(0)}% (${top.totalVisits}/${top.assignments}) visits=${top.totalVisits}${failStr} (${cleanCount}/${POP_SIZE} clean)`, top.params);
 
         // Select elite
         const elites = results.slice(0, ELITE_COUNT).map(r => r.params);

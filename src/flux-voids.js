@@ -673,14 +673,27 @@ document.getElementById('graph-opacity-slider').addEventListener('input',updateG
 document.getElementById('sphere-opacity-slider').addEventListener('input',applySphereOpacity);
 document.getElementById('void-opacity-slider').addEventListener('input',applyVoidOpacity);
 document.getElementById('excitation-speed-slider').addEventListener('input', ()=>{
-    // Slider 1–100 mapped logarithmically: 1→1000ms (slow), 50→220ms (default), 100→30ms (fast)
     const t = +document.getElementById('excitation-speed-slider').value / 100;
-    ELECTRON_STEP_MS = Math.round(Math.exp(Math.log(1000)*(1-t) + Math.log(30)*t));
-    document.getElementById('excitation-speed-val').textContent = ELECTRON_STEP_MS + 'ms';
+    if (t >= 1.0) {
+        ELECTRON_STEP_MS = 0;
+        document.getElementById('excitation-speed-val').textContent = 'MAX';
+    } else {
+        ELECTRON_STEP_MS = Math.round(Math.exp(Math.log(1000)*(1-t) + Math.log(30)*t));
+        document.getElementById('excitation-speed-val').textContent = ELECTRON_STEP_MS + 'ms';
+    }
     // Restart clock so new interval takes effect immediately
     if(excitationClockTimer){ clearInterval(excitationClockTimer); excitationClockTimer=null; startExcitationClock(); }
     // Also restart demo interval if demo is running
-    if(_demoActive && _demoInterval){ clearInterval(_demoInterval); _demoInterval = setInterval(demoTick, _getDemoIntervalMs()); }
+    if(_demoActive) {
+        if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; }
+        if (_demoUncappedId) { clearTimeout(_demoUncappedId); _demoUncappedId = null; }
+        const intervalMs = _getDemoIntervalMs();
+        if (intervalMs === 0) {
+            _demoUncappedId = setTimeout(_demoUncappedLoop, 0);
+        } else {
+            _demoInterval = setInterval(demoTick, intervalMs);
+        }
+    }
 });
 document.getElementById('trail-opacity-slider').addEventListener('input',()=>{
     const pct=+document.getElementById('trail-opacity-slider').value;
