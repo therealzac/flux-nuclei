@@ -3818,12 +3818,7 @@ async function demoTick() {
     if (_tickerEl) _tickerEl.textContent = `${_demoTick} Planck seconds`;
     const _dpTitle = document.getElementById('dp-title');
     if (_dpTitle) _dpTitle.textContent = `${_demoTick} Planck seconds`;
-    // Top-center title: during tournament, show trial label + tick count
-    const _ruleTitle = document.getElementById('rule-title');
-    if (_ruleTitle && _tournamentRunning) {
-        const base = _ruleTitle.dataset.trialLabel || '';
-        _ruleTitle.textContent = base ? `${base}  ·  t${_demoTick}` : `TOURNAMENT  ·  t${_demoTick}`;
-    }
+    // Top-center title is set once per trial by _runTournament — no per-tick update needed
 
     // Live guard checks (T19, T21, T26, T27) — after tick advances xons
     const _gT0 = performance.now();

@@ -1380,6 +1380,20 @@ function _tournamentRandomCandidate() {
     return c;
 }
 
+// Generate a descriptive name for a trial based on its parameter personality
+function _trialDescriptiveName(gen, idx, p) {
+    // Lookahead personality
+    const la = p.lookahead <= 5 ? 'impulsive' : p.lookahead <= 12 ? 'cautious' : p.lookahead <= 20 ? 'strategic' : 'prophetic';
+    // Congestion style
+    const cg = p.congestionMax <= 2 ? 'tight' : p.congestionMax <= 4 ? 'balanced' : 'loose';
+    // Window rhythm
+    const wl = p.windowLen <= 2 ? 'rapid' : p.windowLen <= 4 ? 'steady' : p.windowLen <= 6 ? 'slow' : 'glacial';
+    // Scoring aggression (face bonuses)
+    const agg = (p.faceOnBonus + p.faceNearBonus) <= 10 ? 'passive' : (p.faceOnBonus + p.faceNearBonus) <= 30 ? 'active' : 'aggressive';
+
+    return `G${gen+1}.${idx+1}  ${la} ${cg} ${wl} ${agg}`;
+}
+
 // Main tournament runner — runs each trial visually on-screen (serial, not parallel)
 async function _runTournament() {
     _tournamentRunning = true;
@@ -1421,14 +1435,11 @@ async function _runTournament() {
                 statusEl.textContent = `gen ${gen + 1}/${GENERATIONS} | ${i + 1}/${POP_SIZE} | best=${bestStr}${cleanStr}`;
             }
 
-            // Update top-center title with trial signature
+            // Update top-center title with descriptive trial name
             if (titleEl) {
-                const p = params;
-                const origin = i === 0 && gen === 0 ? 'seed' : i < ELITE_COUNT ? 'elite' : i < ELITE_COUNT * 2 ? 'cross' : 'mutant';
-                const label = `G${gen+1} #${i+1} ${origin}`;
+                const label = _trialDescriptiveName(gen, i, params);
                 titleEl.textContent = label;
-                titleEl.dataset.trialLabel = label; // used by demoTick to append tick count
-                titleEl.title = `la=${p.lookahead} cg=${p.congestionMax} wl=${p.windowLen} sp=${p.singlesPerInner} sm=${p.singlesDeckMajority}`;
+                titleEl.dataset.trialLabel = label;
             }
 
             // Run this trial visually — demo renders on screen
