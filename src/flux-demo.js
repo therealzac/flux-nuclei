@@ -2761,6 +2761,8 @@ async function demoTick() {
                 for (let i = 0; i < candidateScIdArray.length; i++) {
                     _batchResults.set(candidateScIdArray[i], results[i]);
                 }
+                // Push into SolverProxy cache so canMaterialiseQuick() can reuse
+                SolverProxy.cacheBatchResults(candidateScIdArray, results, stateVersion);
             }
         }
     }

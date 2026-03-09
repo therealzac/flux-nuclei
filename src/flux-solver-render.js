@@ -505,7 +505,11 @@ function _pairsHash(sorted){
     }
     return h;
 }
+let _solveCallCount = 0;
+let _solveCallCountPerTick = 0;
 function _solve(scPairs,iters=5000,noBailout=false){
+    _solveCallCount++;
+    _solveCallCountPerTick++;
     const sortedSC=[...scPairs].sort((x,y)=>x[0]-y[0]||x[1]-y[1]);
     // Cache hit? Return deep copy of cached positions (caller may mutate)
     if(!noBailout && iters===5000){

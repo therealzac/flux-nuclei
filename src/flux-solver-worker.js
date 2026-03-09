@@ -127,7 +127,7 @@ async function initGPU() {
         // Fetch WGSL shader
         let shaderCode;
         try {
-            const resp = await fetch('src/flux-solver-gpu.wgsl');
+            const resp = await fetch('flux-solver-gpu.wgsl');
             shaderCode = await resp.text();
         } catch (e) {
             console.warn('[Worker] Failed to load WGSL shader:', e.message);
@@ -442,14 +442,46 @@ async function gpuBatchSolve(basePairs, candidateScPairs) {
     }
 }
 
-// ─── Batch solve handler (GPU with CPU fallback) ───
+// ─── Batch solve handler (GPU with CPU fallback + validation) ───
+let _gpuValidationMode = true;  // Compare GPU vs CPU for first N batches
+let _gpuValidationCount = 0;
+const GPU_VALIDATION_BATCHES = 50;  // validate first 50 batches, then trust GPU
+
 async function handleSolveBatch(msg) {
     const { basePairs, candidateScPairs, requestId } = msg;
 
     let results;
     if (gpuReady && gpuPersistentBuffers) {
         try {
-            results = await gpuBatchSolve(basePairs, candidateScPairs);
+            const gpuResults = await gpuBatchSolve(basePairs, candidateScPairs);
+
+            // Validation: compare GPU vs CPU for early batches
+            if (_gpuValidationMode && _gpuValidationCount < GPU_VALIDATION_BATCHES) {
+                const cpuResults = cpuBatchSolve(basePairs, candidateScPairs);
+                _gpuValidationCount++;
+                let mismatches = 0;
+                for (let i = 0; i < gpuResults.length; i++) {
+                    if (gpuResults[i].pass !== cpuResults[i].pass) {
+                        mismatches++;
+                        self.postMessage({ type: 'warn', text: `GPU/CPU mismatch #${i}: gpu=${gpuResults[i].pass} cpu=${cpuResults[i].pass} (worst: gpu=${gpuResults[i].worst.toFixed(6)} cpu=${cpuResults[i].worst.toFixed(6)})` });
+                    }
+                }
+                if (mismatches > 0) {
+                    self.postMessage({ type: 'warn', text: `Batch ${_gpuValidationCount}: ${mismatches}/${gpuResults.length} GPU/CPU mismatches` });
+                    results = cpuResults;
+                } else {
+                    results = gpuResults;
+                    if (_gpuValidationCount % 10 === 0) {
+                        self.postMessage({ type: 'log', text: `GPU validation ${_gpuValidationCount}/${GPU_VALIDATION_BATCHES}: all pass/fail match` });
+                    }
+                }
+                if (_gpuValidationCount >= GPU_VALIDATION_BATCHES) {
+                    self.postMessage({ type: 'log', text: `GPU validation complete (${GPU_VALIDATION_BATCHES} batches). Trusting GPU.` });
+                    _gpuValidationMode = false;
+                }
+            } else {
+                results = gpuResults;
+            }
         } catch (e) {
             console.warn('[Worker] GPU batch solve failed, falling back to CPU:', e.message);
             results = cpuBatchSolve(basePairs, candidateScPairs);

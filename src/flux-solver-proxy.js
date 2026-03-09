@@ -25,6 +25,8 @@ const SolverProxy = (function() {
     let requestCounter = 0;
     let batchCache = new Map();    // scId → {pass, worst, avg}
     let batchCacheVersion = -1;
+    let _batchCallCount = 0;
+    let _batchCandidateCount = 0;
 
     // ─── Init ───
     function init() {
@@ -102,6 +104,12 @@ const SolverProxy = (function() {
                 }
                 break;
             }
+            case 'log':
+                console.log(`[Worker] ${msg.text}`);
+                break;
+            case 'warn':
+                console.warn(`[Worker] ${msg.text}`);
+                break;
         }
     }
 
@@ -110,6 +118,8 @@ const SolverProxy = (function() {
     // Returns Promise<{pass, worst, avg}[]> or null if not available.
     function solveBatch(basePairs, candidateScPairs) {
         if (!ready || !worker || _forceDisable) return Promise.resolve(null);
+        _batchCallCount++;
+        _batchCandidateCount += candidateScPairs.length;
 
         return new Promise((resolve) => {
             const requestId = requestCounter++;
@@ -155,5 +165,6 @@ const SolverProxy = (function() {
         hasGPU() { return hasGPU; },
         get _forceDisable() { return _forceDisable; },
         set _forceDisable(v) { _forceDisable = v; },
+        get stats() { return { batchCalls: _batchCallCount, batchCandidates: _batchCandidateCount }; },
     };
 })();

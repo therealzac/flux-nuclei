@@ -113,6 +113,11 @@ function excitationMaterialiseSC(e, scId, isBridge){
 // leaves side effects — safe to call in lookahead.
 function canMaterialiseQuick(scId){
     if(activeSet.has(scId)||impliedSet.has(scId)||xonImpliedSet.has(scId)) return true;
+    // Check GPU batch cache first (avoids redundant CPU solve)
+    if (typeof SolverProxy !== 'undefined' && SolverProxy.isReady()) {
+        const cached = SolverProxy.getBatchResult(scId);
+        if (cached) return cached.pass;
+    }
     // Build constraint pairs with the candidate SC added (cached base pairs)
     const basePairs = _getBasePairs();
     const sc=SC_BY_ID[scId];
