@@ -464,7 +464,7 @@ function rebuildLatticeGeometry(level){
 const activeSet=new Set();
 const impliedSet=new Set();
 const impliedBy=new Map();
-const electronImpliedSet=new Set();
+const xonImpliedSet=new Set();
 const IMPLY_THRESHOLD=1e-6;
 
 // ─── Void duality classification ──────────────────────────────────────────────
@@ -560,7 +560,7 @@ function solvePositions(extraPair){
 function tryAdd(sc){
     const pairs=[];
     activeSet.forEach(id=>{ const s=SC_BY_ID[id]; pairs.push([s.a,s.b]); });
-    electronImpliedSet.forEach(id=>{ const s=SC_BY_ID[id]; pairs.push([s.a,s.b]); });
+    xonImpliedSet.forEach(id=>{ const s=SC_BY_ID[id]; pairs.push([s.a,s.b]); });
     pairs.push([sc.a,sc.b]);
     return _solve(pairs).converged;
 }
@@ -568,14 +568,14 @@ function detectImplied(){
     impliedSet.clear(); impliedBy.clear();
     const activePairs=[];
     activeSet.forEach(id=>{ const s=SC_BY_ID[id]; activePairs.push([s.a,s.b]); });
-    electronImpliedSet.forEach(id=>{ const s=SC_BY_ID[id]; activePairs.push([s.a,s.b]); });
+    xonImpliedSet.forEach(id=>{ const s=SC_BY_ID[id]; activePairs.push([s.a,s.b]); });
     const {p,converged:probeConverged}=_solve(activePairs);
     let newImplied = 0;
     if(probeConverged){
         // When excitations are active, bypass blockedImplied for cascade detection.
         // blockedImplied is a manual-mode feature; excitation physics should detect
         // all cascade shortcuts so octahedral voids can actualize properly.
-        const skipBlocked = electronImpliedSet.size > 0;
+        const skipBlocked = xonImpliedSet.size > 0;
         // Shared snapshot: all implied SCs in one pass share the same cause set
         // (avoids N × new Set(activeSet) allocations)
         let _activeSnap = null;
@@ -587,11 +587,11 @@ function detectImplied(){
                 impliedSet.add(s.id);
                 if(!_activeSnap) _activeSnap = new Set(activeSet);
                 impliedBy.set(s.id, _activeSnap);
-                if(!electronImpliedSet.has(s.id)) newImplied++;
+                if(!xonImpliedSet.has(s.id)) newImplied++;
             }
         });
     }
-    electronImpliedSet.forEach(id=>{
+    xonImpliedSet.forEach(id=>{
         if(!activeSet.has(id)&&!impliedSet.has(id)){ impliedSet.add(id); impliedBy.set(id,new Set()); }
     });
     // If no new cascade-implied shortcuts were found, the probe positions
@@ -605,14 +605,14 @@ function detectImplied(){
     })());
     if(!finalConverged){
         impliedSet.clear(); impliedBy.clear();
-        electronImpliedSet.forEach(id=>{ impliedSet.add(id); impliedBy.set(id,new Set()); });
+        xonImpliedSet.forEach(id=>{ impliedSet.add(id); impliedBy.set(id,new Set()); });
         return solvePositions();
     }
     return pFinal;
 }
 
 // ─── Performance: state version caching ──────────────────────────────────────
-// stateVersion increments whenever activeSet / impliedSet / electronImpliedSet
+// stateVersion increments whenever activeSet / impliedSet / xonImpliedSet
 // change. This lets candidateOk and the side panel skip expensive solver work
 // when called from the hover path (where state hasn't changed).
 
@@ -625,7 +625,7 @@ function bumpState() {
 // ── Performance helpers (cached per stateVersion) ──────────────────────
 function getAllOpen(){
     if(_allOpenVersion === stateVersion) return _allOpenCache;
-    _allOpenCache = new Set([...activeSet, ...impliedSet, ...electronImpliedSet]);
+    _allOpenCache = new Set([...activeSet, ...impliedSet, ...xonImpliedSet]);
     _allOpenVersion = stateVersion;
     return _allOpenCache;
 }
@@ -634,7 +634,7 @@ function _getBasePairs(){
     const pairs = [];
     activeSet.forEach(id => { const s = SC_BY_ID[id]; pairs.push([s.a, s.b]); });
     impliedSet.forEach(id => { const s = SC_BY_ID[id]; pairs.push([s.a, s.b]); });
-    electronImpliedSet.forEach(id => { const s = SC_BY_ID[id]; pairs.push([s.a, s.b]); });
+    xonImpliedSet.forEach(id => { const s = SC_BY_ID[id]; pairs.push([s.a, s.b]); });
     _basePairsCache = pairs;
     _basePairsVersion = stateVersion;
     return pairs;
@@ -856,7 +856,7 @@ function updateLatticeLevel(){
     removeAllExcitations();
     latticeLevel=+document.getElementById('lattice-slider').value;
     document.getElementById('lattice-lv').textContent='L'+latticeLevel;
-    activeSet.clear(); impliedSet.clear(); impliedBy.clear(); electronImpliedSet.clear(); blockedImplied.clear();
+    activeSet.clear(); impliedSet.clear(); impliedBy.clear(); xonImpliedSet.clear(); blockedImplied.clear();
     selectedVert=-1; hoveredVert=-1; hoveredSC=-1;
     rebuildLatticeGeometry(latticeLevel);
     _solveCache = { key: -1, len: -1, result: null }; // invalidate solve cache
@@ -1029,6 +1029,7 @@ function startRenderLoop(){
         _renderLastTime = now;
         tickExcitations(dt);
         if(_demoActive) _tickDemoXons(dt);
+        if(typeof _tickAutoOrbit==='function') _tickAutoOrbit(dt);
         _updateVoidVisibility();
         tickOctVoids();
         renderer.render(scene, camera);

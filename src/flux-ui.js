@@ -37,7 +37,7 @@ function scheduleJiggle(){
     jiggleTimer=setTimeout(()=>{ jiggleStep(); scheduleJiggle(); },jiggleMs);
 }
 function jiggleStep(){
-    // Jiggle uses electronImpliedSet (not activeSet) so excitations and
+    // Jiggle uses xonImpliedSet (not activeSet) so excitations and
     // the strain monitor can update/sever jiggle shortcuts as needed.
     const allOpen = getAllOpen();
     const density = allOpen.size / ALL_SC.length;
@@ -48,7 +48,7 @@ function jiggleStep(){
         for(let i=inactive.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1));[inactive[i],inactive[j]]=[inactive[j],inactive[i]]; }
         for(const sc of inactive){
             if(canMaterialiseQuick(sc.id)){
-                electronImpliedSet.add(sc.id);
+                xonImpliedSet.add(sc.id);
                 impliedSet.add(sc.id);
                 if(!impliedBy.has(sc.id)) impliedBy.set(sc.id, new Set());
                 acted=true; break;
@@ -56,15 +56,15 @@ function jiggleStep(){
         }
     } else {
         // Try removing a random electron-implied SC (jiggle's own shortcuts)
-        const canRemove = [...electronImpliedSet];
+        const canRemove = [...xonImpliedSet];
         if(canRemove.length){
             for(let i=canRemove.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1));[canRemove[i],canRemove[j]]=[canRemove[j],canRemove[i]]; }
             for(const id of canRemove){
                 const pairs = [];
                 activeSet.forEach(aid=>{ const s=SC_BY_ID[aid]; pairs.push([s.a,s.b]); });
-                electronImpliedSet.forEach(eid=>{ if(eid!==id){ const s=SC_BY_ID[eid]; pairs.push([s.a,s.b]); } });
+                xonImpliedSet.forEach(eid=>{ if(eid!==id){ const s=SC_BY_ID[eid]; pairs.push([s.a,s.b]); } });
                 if(_solve(pairs).converged){
-                    electronImpliedSet.delete(id);
+                    xonImpliedSet.delete(id);
                     // Clear void state on any excitation that used this shortcut
                     for(const e of excitations){
                         if(e.ownShortcut === id) e.ownShortcut = null;
@@ -78,10 +78,10 @@ function jiggleStep(){
         }
     }
     // When stuck, remove one random shortcut instead of clearing everything
-    if(!acted && electronImpliedSet.size > 0){
-        const arr = [...electronImpliedSet];
+    if(!acted && xonImpliedSet.size > 0){
+        const arr = [...xonImpliedSet];
         const id = arr[Math.floor(Math.random() * arr.length)];
-        electronImpliedSet.delete(id);
+        xonImpliedSet.delete(id);
         for(const e of excitations){
             if(e.ownShortcut === id) e.ownShortcut = null;
             if(e.voidScIds && e.voidScIds.includes(id)){
@@ -94,7 +94,7 @@ function jiggleStep(){
     // canMaterialiseQuick. We solve first, check strain, and only commit
     // if the result is safe. This prevents physicsUpdate → updateStatus
     // from halting on a temporarily-bad state we'd otherwise rollback.
-    const snapEI = new Set(electronImpliedSet);
+    const snapEI = new Set(xonImpliedSet);
     const snapImplied = new Set(impliedSet);
     const snapImpliedBy = new Map([...impliedBy].map(([k,v]) => [k, new Set(v)]));
     const snapPos = pos.map(p => [p[0], p[1], p[2]]);
@@ -112,7 +112,7 @@ function jiggleStep(){
     }
     if(worstErr > JIGGLE_HALT_TOL){
         // Rollback: restore full state
-        electronImpliedSet.clear(); snapEI.forEach(id => electronImpliedSet.add(id));
+        xonImpliedSet.clear(); snapEI.forEach(id => xonImpliedSet.add(id));
         impliedSet.clear(); snapImplied.forEach(id => impliedSet.add(id));
         impliedBy.clear(); for(const [k,v] of snapImpliedBy) impliedBy.set(k, v);
         for(let i = 0; i < N; i++){ pos[i][0]=snapPos[i][0]; pos[i][1]=snapPos[i][1]; pos[i][2]=snapPos[i][2]; }
@@ -137,7 +137,7 @@ function buildExportData(){
     const positions=pos.map(([x,y,z])=>({x:+x.toFixed(6),y:+y.toFixed(6),z:+z.toFixed(6)}));
     const activePairs=[...activeSet].map(id=>{ const s=SC_BY_ID[id]; return [s.a,s.b]; });
     const impliedPairs=[...impliedSet].map(id=>{ const s=SC_BY_ID[id]; return [s.a,s.b]; });
-    const electronPairs=[...electronImpliedSet].map(id=>{ const s=SC_BY_ID[id]; return [s.a,s.b]; });
+    const electronPairs=[...xonImpliedSet].map(id=>{ const s=SC_BY_ID[id]; return [s.a,s.b]; });
     const {converged:activeConverged}=_solve(activePairs);
     const {converged:fullConverged}=_solve([...activePairs,...impliedPairs,...electronPairs]);
     let maxBaseErr=0,worstBase=null;
@@ -162,7 +162,7 @@ function buildExportData(){
             dirCounts: [...e.dirCounts],
             trail: [...e.trail]
         })),
-        meta:{ activeCount:activeSet.size,impliedCount:impliedSet.size,electronImpliedCount:electronImpliedSet.size,blockedCount:candidates.filter(x=>!x.allowed).length,allowedCount:candidates.filter(x=>x.allowed).length,latticeLevel,nodeCount:N,shortcutCount:ALL_SC.length },
+        meta:{ activeCount:activeSet.size,impliedCount:impliedSet.size,xonImpliedCount:xonImpliedSet.size,blockedCount:candidates.filter(x=>!x.allowed).length,allowedCount:candidates.filter(x=>x.allowed).length,latticeLevel,nodeCount:N,shortcutCount:ALL_SC.length },
         solver:{ activeSetConverged:activeConverged,fullSetConverged:fullConverged,violated,worstBaseEdge:worstBase,worstShortcut:worstSC,worstSeparation:worstSep,minimalBadSubset },
         geometry:{ avgBaseEdgeLength:+avgEdge.toFixed(8),maxBaseEdgeError:+maxBaseErr.toFixed(8),actualDensity:+actualDensity.toFixed(8),idealDensity:+(Math.PI/(3*Math.sqrt(2))).toFixed(8) } };
 }
@@ -174,12 +174,12 @@ const sideShortcuts=document.getElementById('side-shortcuts');
 const shList=document.getElementById('sh-list');
 
 function severImplied(id){
-    if(electronImpliedSet.has(id)){
+    if(xonImpliedSet.has(id)){
         const remainPairs=[];
         activeSet.forEach(aid=>{ const s=SC_BY_ID[aid]; remainPairs.push([s.a,s.b]); });
-        electronImpliedSet.forEach(eid=>{ if(eid!==id){ const s=SC_BY_ID[eid]; remainPairs.push([s.a,s.b]); } });
+        xonImpliedSet.forEach(eid=>{ if(eid!==id){ const s=SC_BY_ID[eid]; remainPairs.push([s.a,s.b]); } });
         if(!_solve(remainPairs).converged){ setStatus('\u26a0 cannot sever \u2014 excitation shortcut is load-bearing'); return; }
-        electronImpliedSet.delete(id);
+        xonImpliedSet.delete(id);
         // Clear tet state on any excitation whose tet included this shortcut
         for(const e of excitations){
             if(e.ownShortcut === id) e.ownShortcut = null;
@@ -217,12 +217,12 @@ function updateSidePanel(){
     function isLoadBearing(id,fromActive){
         const remainPairs=[];
         activeSet.forEach(aid=>{ if(aid!==id){ const s=SC_BY_ID[aid]; remainPairs.push([s.a,s.b]); } });
-        electronImpliedSet.forEach(eid=>{ if(fromActive||eid!==id){ const s=SC_BY_ID[eid]; remainPairs.push([s.a,s.b]); } });
+        xonImpliedSet.forEach(eid=>{ if(fromActive||eid!==id){ const s=SC_BY_ID[eid]; remainPairs.push([s.a,s.b]); } });
         return !_solve(remainPairs).converged;
     }
     const entries=[];
     [...activeSet].forEach(id=>{ entries.push({id,kind:'manual',locked:isLoadBearing(id,true)}); });
-    [...impliedSet].forEach(id=>{ const isElectron=electronImpliedSet.has(id); entries.push({id,kind:isElectron?'electron':'implied',locked:isLoadBearing(id,false)}); });
+    [...impliedSet].forEach(id=>{ const isElectron=xonImpliedSet.has(id); entries.push({id,kind:isElectron?'electron':'implied',locked:isLoadBearing(id,false)}); });
     // DO NOT REMOVE: sort severable (locked=false=0) first, locked (true=1) last
     entries.sort((a,b)=>a.locked-b.locked);
     entries.forEach(({id,kind,locked})=>{
@@ -271,6 +271,35 @@ let isGrabMode=false;
 function applyCamera(){ camera.position.set(panTarget.x+sph.r*Math.sin(sph.phi)*Math.sin(sph.theta),panTarget.y+sph.r*Math.cos(sph.phi),panTarget.z+sph.r*Math.sin(sph.phi)*Math.cos(sph.theta)); camera.lookAt(panTarget.x,panTarget.y,panTarget.z); }
 // DEFERRED to init block in flux-v2.html (depends on camera from flux-solver-render.js)
 // applyCamera();
+
+// ─── Auto-orbit ──────────────────────────────────────────────────────────────
+let _autoOrbit = false;
+// Called every frame from the render loop (dt in seconds).
+// Rotates theta at a speed derived from the orbit-speed-slider.
+function _tickAutoOrbit(dt) {
+    if (!_autoOrbit || isDrag) return;
+    const slider = document.getElementById('orbit-speed-slider');
+    const raw = slider ? +slider.value : 25; // 1-100
+    const speed = raw * 0.004; // radians/sec: 0.004 (slow) to 0.4 (fast)
+    sph.theta += speed * dt;
+    applyCamera();
+}
+// Toggle + UI wiring (called once from init block)
+function _initAutoOrbit() {
+    const toggle = document.getElementById('orbit-toggle');
+    const val = document.getElementById('orbit-speed-val');
+    const slider = document.getElementById('orbit-speed-slider');
+    if (!toggle || !val || !slider) return;
+    function updateLabel() {
+        if (!_autoOrbit) { val.textContent = 'off'; val.style.color = '#555'; }
+        else { val.textContent = slider.value + '%'; val.style.color = '#9abccc'; }
+        toggle.style.color = _autoOrbit ? '#d4a054' : '#6a8aaa';
+    }
+    toggle.addEventListener('click', () => { _autoOrbit = !_autoOrbit; updateLabel(); });
+    slider.addEventListener('input', () => { if (!_autoOrbit) { _autoOrbit = true; } updateLabel(); });
+    updateLabel();
+}
+
 
 window.addEventListener('keydown',e=>{ if(e.metaKey||e.ctrlKey){ isGrabMode=true; canvas.style.cursor='grab'; } });
 window.addEventListener('keyup',e=>{ if(!e.metaKey&&!e.ctrlKey){ isGrabMode=false; canvas.style.cursor='default'; } });

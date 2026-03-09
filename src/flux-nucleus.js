@@ -154,7 +154,7 @@ const NucleusSimulator = (function(){
     // ── Count emergent oct voids (naturally formed, not force-actualized) ──
     function countEmergentOctVoids(){
         let count = 0;
-        const allOpen = new Set([...activeSet, ...impliedSet, ...electronImpliedSet]);
+        const allOpen = new Set([...activeSet, ...impliedSet, ...xonImpliedSet]);
         for(let vi = 0; vi < voidNeighborData.length; vi++){
             const v = voidNeighborData[vi];
             if(v.type !== 'oct') continue;
@@ -296,7 +296,7 @@ const NucleusSimulator = (function(){
         // 2. Clear state
         activeSet.clear();
         if(typeof impliedSet !== 'undefined') impliedSet.clear();
-        if(typeof electronImpliedSet !== 'undefined') electronImpliedSet.clear();
+        if(typeof xonImpliedSet !== 'undefined') xonImpliedSet.clear();
         if(typeof blockedImplied !== 'undefined') blockedImplied.clear();
         if(typeof impliedBy !== 'undefined') impliedBy.clear();
         _forceActualizedVoids.clear();

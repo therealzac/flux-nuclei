@@ -36,7 +36,7 @@ function _buildStateStr(){
     for(let i = 0; i < n; i++){
         const id = ALL_SC[i].id;
         if(activeSet.has(id)) parts[i] = '2';
-        else if(electronImpliedSet.has(id) || impliedSet.has(id)) parts[i] = '1';
+        else if(xonImpliedSet.has(id) || impliedSet.has(id)) parts[i] = '1';
         else parts[i] = '0';
     }
     return parts.join('');
@@ -301,7 +301,7 @@ function tournamentCheckTick(){
             t: tournamentTickCounter,
             q: quarks.map(e => ({ id: e._xonId, n: e.node, pn: e.prevNode, f: e._currentFace, sf: e._stepsInFace || 0, col: e.col })),
             sc: [...allOpen],
-            ei: [...electronImpliedSet],
+            ei: [...xonImpliedSet],
             ta: tetAct,
             oc: _octSCIds.filter(id => allOpen.has(id)).length,
         };
@@ -550,16 +550,16 @@ function _showTournamentComplete(){
 
         // ── Reconstruct lattice state from snapshot ──
         // Clear current SC state
-        electronImpliedSet.clear();
+        xonImpliedSet.clear();
         impliedSet.clear();
         impliedBy.clear();
         // Don't touch activeSet — keep it at 0 (no manual SCs)
 
-        // Apply recorded electronImplied SCs
+        // Apply recorded xonImplied SCs
         const openSet = new Set(frame.sc);
         if (frame.ei) {
             for (const scId of frame.ei) {
-                electronImpliedSet.add(scId);
+                xonImpliedSet.add(scId);
                 impliedSet.add(scId);
             }
         }
@@ -780,7 +780,7 @@ function extractFallbackFeatures(e, scId, dest, allOpen, kStr, kBase){
 
 function updateStatus(){
     if(simHalted) return;
-    const n=activeSet.size,ni=impliedSet.size,ne=electronImpliedSet.size,el=document.getElementById('st-state');
+    const n=activeSet.size,ni=impliedSet.size,ne=xonImpliedSet.size,el=document.getElementById('st-state');
     const totalOpen = n+ni+ne;
     if(!totalOpen){ el.textContent='FCC'; el.style.color='#3a4a5a'; }
     else{ el.textContent=n+' manual'+(ni?' + '+ni+' implied':'')+(ne?' + '+ne+' electron':''); el.style.color='#aaccff'; }
@@ -806,9 +806,9 @@ function updateStatus(){
         // electron-implied SCs, clear them and re-solve instead of halting.
         // Halting on solver drift is too aggressive — the structure can be
         // recovered by dropping the offending constraints.
-        if(electronImpliedSet.size && !simHalted){
-            for(const id of [...electronImpliedSet]){
-                electronImpliedSet.delete(id);
+        if(xonImpliedSet.size && !simHalted){
+            for(const id of [...xonImpliedSet]){
+                xonImpliedSet.delete(id);
                 impliedSet.delete(id);
                 impliedBy.delete(id);
             }
@@ -916,7 +916,7 @@ function clearAll(){
     if(jiggleActive) toggleJiggle();
     deactivateBigBang();
     activeSet.clear(); impliedSet.clear(); impliedBy.clear();
-    electronImpliedSet.clear(); blockedImplied.clear();
+    xonImpliedSet.clear(); blockedImplied.clear();
     hoveredSC=-1; selectedVert=-1; hoveredVert=-1;
     pos=REST.map(v=>[...v]);
     bumpState();

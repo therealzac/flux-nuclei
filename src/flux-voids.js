@@ -435,14 +435,14 @@ function updateVoidSpheres(){
                     const wasCycleActualized = cycle.actualized || false;
                     cycle.actualized = _isCycleSquare(cycle.verts, cycle.scIds);
                     // Lock in oct cycle SCs: when a cycle newly actualizes,
-                    // promote any cascade-implied SCs to electronImpliedSet
+                    // promote any cascade-implied SCs to xonImpliedSet
                     // so they persist across detectImplied recalculations.
                     // Without this, octs built partly on cascade-implied SCs
                     // pop in and immediately out of existence.
                     if(cycle.actualized && !wasCycleActualized){
                         for(const id of cycle.scIds){
-                            if(impliedSet.has(id) && !electronImpliedSet.has(id) && !activeSet.has(id)){
-                                electronImpliedSet.add(id);
+                            if(impliedSet.has(id) && !xonImpliedSet.has(id) && !activeSet.has(id)){
+                                xonImpliedSet.add(id);
                                 if(!impliedBy.has(id)) impliedBy.set(id, new Set());
                             }
                         }
@@ -631,7 +631,7 @@ function applyStateFromJSON(data){
         applyCamera();
     }
     activeSet.clear(); impliedSet.clear(); impliedBy.clear();
-    electronImpliedSet.clear(); blockedImplied.clear();
+    xonImpliedSet.clear(); blockedImplied.clear();
     selectedVert=-1; hoveredVert=-1; hoveredSC=-1;
     // Apply active shortcuts first (positions will be solved fresh)
     if(data.active){
