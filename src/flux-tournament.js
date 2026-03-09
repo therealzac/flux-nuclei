@@ -892,7 +892,8 @@ function updateStatus(){
     }
     document.getElementById('violation-banner').style.display='none';
     document.getElementById('st-sel').textContent=selectedVert>=0?'v'+selectedVert+' · '+candidatePartners.size+' candidate'+(candidatePartners.size!==1?'s':''):'';
-    updateSidePanel();
+    // Skip side panel during demo — isLoadBearing() runs _solve() per SC (~500ms total)
+    if (!_demoActive) updateSidePanel();
 }
 
 // Lightweight hover status update — only refreshes the selection text label.

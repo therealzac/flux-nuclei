@@ -111,18 +111,25 @@ function excitationMaterialiseSC(e, scId, isBridge){
 // Returns true iff adding scId to the constraint system passes the strain
 // thresholds. Uses a SINGLE solver call (no detectImplied) and never
 // leaves side effects — safe to call in lookahead.
+let _cmqCallCount = 0, _cmqCpuCount = 0, _cmqCacheHits = 0, _cmqTotalMs = 0;
 function canMaterialiseQuick(scId){
+    _cmqCallCount++;
     if(activeSet.has(scId)||impliedSet.has(scId)||xonImpliedSet.has(scId)) return true;
     // Check GPU batch cache first (avoids redundant CPU solve)
     if (typeof SolverProxy !== 'undefined' && SolverProxy.isReady()) {
         const cached = SolverProxy.getBatchResult(scId);
+        if (cached) { _cmqCacheHits++; }
         if (cached) return cached.pass;
     }
     // Build constraint pairs with the candidate SC added (cached base pairs)
+    _cmqCpuCount++;
+    const _cmqT0 = performance.now();
     const basePairs = _getBasePairs();
     const sc=SC_BY_ID[scId];
     const pairs = [...basePairs, [sc.a, sc.b]];
-    const {p}=_solve(pairs);
+    // 500 iters is enough for strain check (don't need full convergence)
+    const {p}=_solve(pairs, 500);
+    _cmqTotalMs += performance.now() - _cmqT0;
     // Don't bail on !converged — solver may not reach 1e-9 on L3+
     // but positions can still be within strain tolerance. Let strain check decide.
     const ROLLBACK_TOL=5e-4, AVG_TOL=1e-5;

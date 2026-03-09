@@ -2235,11 +2235,15 @@ const QUARK_COLORS = { pu: 0xffdd44, pd: 0x44cc66, nu: 0x4488ff, nd: 0xff4444 };
 const A_SET = new Set([1, 3, 6, 8]);
 
 let _tickInProgress = false; // guard against overlapping async ticks
+// ─── Profiling ───
+let _tickTotalMs = 0, _tickCount = 0, _tickMaxMs = 0;
+let _profPhases = { wb: 0, p0: 0, p05: 0, p1: 0, p2: 0, p3: 0, p3b: 0, p4: 0, p5: 0, solver: 0, cleanup: 0, render: 0, guards: 0 };
 async function demoTick() {
     if (!_demoActive || !_demoSchedule) return;
     if (simHalted) return;
     if (_tickInProgress) return; // previous async tick still running
     _tickInProgress = true;
+    const _tickT0 = performance.now();
     try {
 
     // Clear stale movement flags from previous tick so WB processing isn't blocked
@@ -2475,6 +2479,7 @@ async function demoTick() {
 
     const planned = new Set();  // globally reserved destination nodes
     let anyMoved = false;
+    const _pT = performance.now(); _profPhases.wb += _pT - _tickT0; // phase timer anchor (wb = window boundary + setup)
 
     // ── PHASE 0: Pre-check tet/idle_tet xons with blocked next steps ──
     // If a tet/idle_tet xon's next step is blocked by another tet/idle_tet xon
@@ -2522,6 +2527,7 @@ async function demoTick() {
         }
         if (phase0Changed) occupied = _occupiedNodes();
     }
+    const _pT0 = performance.now(); _profPhases.p0 += _pT0 - _pT;
 
     // ── PHASE 0.5: Return weak-force xons toward the oct cage ──
     // Weak xons broke confinement and are loose in the lattice.
@@ -2617,6 +2623,7 @@ async function demoTick() {
             }
         }
     }
+    const _pT05 = performance.now(); _profPhases.p05 += _pT05 - _pT0;
 
     // ── PHASE 1: Plan tet/idle_tet moves (fixed sequences) ──
     const tetPlans = [];
@@ -2708,6 +2715,8 @@ async function demoTick() {
         }
     }
 
+    const _pT1 = performance.now(); _profPhases.p1 += _pT1 - _pT05;
+
     // ── PHASE 2: Coordinated oct movement planning ──
     // Remove all oct xons from occupied so they can see each other's positions as available
     // (enables position swaps and chain moves)
@@ -2745,24 +2754,30 @@ async function demoTick() {
             }
         }
         if (candidateScIds.size > 0) {
-            // Build data for Worker: base pairs + candidate SC pairs
-            const basePairs = _getBasePairs();
-            const candidateScPairs = [];
-            const candidateScIdArray = [];
-            for (const scId of candidateScIds) {
-                const sc = SC_BY_ID[scId];
-                candidateScPairs.push([sc.a, sc.b]);
-                candidateScIdArray.push(scId);
-            }
-            // Await batch results from Worker
-            const results = await SolverProxy.solveBatch(basePairs, candidateScPairs);
-            if (results) {
-                _batchResults = new Map();
-                for (let i = 0; i < candidateScIdArray.length; i++) {
-                    _batchResults.set(candidateScIdArray[i], results[i]);
+            const candidateScIdArray = [...candidateScIds];
+            // Only use Worker batch when enough candidates to amortize round-trip.
+            // Worker overhead is ~50ms for postMessage round-trip; CPU CMQ is ~12ms each.
+            // Break-even: ~4 candidates. Below that, CPU is faster.
+            const MIN_BATCH_SIZE = 5;
+            if (candidateScIdArray.length >= MIN_BATCH_SIZE) {
+                const basePairs = _getBasePairs();
+                const candidateScPairs = candidateScIdArray.map(id => { const sc = SC_BY_ID[id]; return [sc.a, sc.b]; });
+                const _batchT0 = performance.now();
+                const results = await SolverProxy.solveBatch(basePairs, candidateScPairs);
+                _profPhases.gpuBatch = (_profPhases.gpuBatch || 0) + (performance.now() - _batchT0);
+                if (results) {
+                    _batchResults = new Map();
+                    for (let i = 0; i < candidateScIdArray.length; i++) {
+                        _batchResults.set(candidateScIdArray[i], results[i]);
+                    }
+                    SolverProxy.cacheBatchResults(candidateScIdArray, results, stateVersion);
                 }
-                // Push into SolverProxy cache so canMaterialiseQuick() can reuse
-                SolverProxy.cacheBatchResults(candidateScIdArray, results, stateVersion);
+            } else {
+                // Small batch: run CMQ on CPU inline (faster than Worker round-trip)
+                _batchResults = new Map();
+                for (const scId of candidateScIdArray) {
+                    _batchResults.set(scId, { pass: canMaterialiseQuick(scId) });
+                }
             }
         }
     }
@@ -2976,6 +2991,8 @@ async function demoTick() {
             }
         }
     }
+
+    const _pT2 = performance.now(); _profPhases.p2 += _pT2 - _pT1;
 
     // ── PHASE 3: Execute all planned moves ──
     // Oct moves execute FIRST (to vacate nodes for tet xons).
@@ -3250,6 +3267,8 @@ async function demoTick() {
         }
     }
 
+    const _pT3 = performance.now(); _profPhases.p3 += _pT3 - _pT2;
+
     // ── PHASE 3b: Rescue stuck oct xons (no assignment or assignment revoked) ──
     // These xons didn't move in PHASE 3. Try any valid 2-step-aware move.
     occupied = _occupiedNodes();
@@ -3393,6 +3412,8 @@ async function demoTick() {
             }
         }
     }
+
+    const _pT3b = performance.now(); _profPhases.p3b += _pT3b - _pT3;
 
     // ── PHASE 4: Scatter collisions / GLUON ANNIHILATION ──
     // Any node with 2+ xons: try scatter first, then annihilate if unresolvable.
@@ -3608,6 +3629,8 @@ async function demoTick() {
         }
     }
 
+    const _pT4 = performance.now(); _profPhases.p4 += _pT4 - _pT3b;
+
     // ── PHASE 5: Global deadlock detection (non-fatal, warn only) ──
     if (typeof _globalStuckTicks === 'undefined') _globalStuckTicks = 0;
     if (!anyMoved && _demoXons.some(x => x.alive)) {
@@ -3618,6 +3641,8 @@ async function demoTick() {
     } else {
         _globalStuckTicks = 0;
     }
+
+    const _pT5 = performance.now(); _profPhases.p5 += _pT5 - _pT4;
 
     // ── Advance gluons along oct edges (also negotiates with vacuum) ──
     if (_advanceGluons()) _solverNeeded = true;
@@ -3636,6 +3661,72 @@ async function demoTick() {
         applyPositions(pSolved);
         updateSpheres();
     }
+
+    // ── KEPLER + INVARIANT CHECKS (every tick, non-negotiable) ──
+    // Fast path: density check + edge/SC/repulsion validation.
+    // These iterate flat arrays — total <1ms per tick.
+    {
+        // 1. Kepler density
+        const _actualDens = computeActualDensity() * 100;
+        const _idealDens = computeIdealDensity() * 100;
+        const _densDev = Math.abs(_actualDens - _idealDens);
+        if (_densDev > 0.01) {
+            _keplerViolation(_actualDens, _idealDens);
+        }
+        const _densEl = document.getElementById('st-dens');
+        if (_densEl) {
+            _densEl.textContent = _actualDens.toFixed(4) + '%';
+            _densEl.style.color = _densDev < 0.001 ? '#6a8aaa' : _densDev < 0.01 ? '#ffaa44' : '#ff4444';
+        }
+
+        // 2. Edge/SC/repulsion invariants (same checks as updateStatus but no side panel)
+        const TOL = 1e-3;
+        let violation = null;
+        for (const [i,j] of BASE_EDGES) {
+            const err = Math.abs(vd(pos[i],pos[j]) - 1.0);
+            if (err > TOL) { violation = `R1 base edge v${i}-v${j} err=${err.toFixed(5)}`; break; }
+        }
+        if (!violation) {
+            for (const id of activeSet) {
+                const s = SC_BY_ID[id];
+                const err = Math.abs(vd(pos[s.a],pos[s.b]) - 1.0);
+                if (err > TOL) { violation = `R2 shortcut sc${id} v${s.a}-v${s.b} err=${err.toFixed(5)}`; break; }
+            }
+        }
+        if (!violation) {
+            for (const [i,j] of REPULSION_PAIRS) {
+                const d = vd(pos[i],pos[j]);
+                if (d < 1.0 - TOL) { violation = `R3 overlap v${i}-v${j} dist=${d.toFixed(5)}`; break; }
+            }
+        }
+        if (violation) {
+            // Soft recovery: try clearing electron-implied SCs
+            if (xonImpliedSet.size && !simHalted) {
+                for (const id of [...xonImpliedSet]) {
+                    xonImpliedSet.delete(id); impliedSet.delete(id); impliedBy.delete(id);
+                }
+                bumpState();
+                const pFinal = detectImplied();
+                applyPositions(pFinal);
+                // Re-check after recovery
+                let stillBad = false;
+                for (const [i,j] of BASE_EDGES) {
+                    if (Math.abs(vd(pos[i],pos[j]) - 1.0) > TOL) { stillBad = true; break; }
+                }
+                if (!stillBad) { /* recovered */ }
+                else {
+                    simHalted = true;
+                    document.getElementById('violation-msg').textContent = 'HALTED: ' + violation;
+                    document.getElementById('violation-banner').style.display = 'block';
+                }
+            } else if (!simHalted) {
+                simHalted = true;
+                document.getElementById('violation-msg').textContent = 'HALTED: ' + violation;
+                document.getElementById('violation-banner').style.display = 'block';
+            }
+        }
+    }
+
     // SC attribution cleanup: remove eSCs with stale attributions.
     // An attribution is stale if the xon that caused it is no longer alive
     // or no longer assigned to the attributed face.
@@ -3663,6 +3754,8 @@ async function demoTick() {
         }
     }
 
+    const _pTsolver = performance.now(); _profPhases.solver += _pTsolver - _pT5;
+
     // ── Decay dying xon trails (every simulation tick, not per-frame) ──
     _decayDyingXons();
 
@@ -3689,6 +3782,8 @@ async function demoTick() {
         if (typeof updateVoidSpheres === 'function') updateVoidSpheres();
     }
 
+    const _pTrender = performance.now(); _profPhases.render += _pTrender - _pTsolver;
+
     _demoTick++;
 
     // Update Planck-second ticker (both right-panel status and left-panel title)
@@ -3698,22 +3793,80 @@ async function demoTick() {
     if (_dpTitle) _dpTitle.textContent = `${_demoTick} Planck seconds`;
 
     // Live guard checks (T19, T21, T26, T27) — after tick advances xons
+    const _gT0 = performance.now();
     if (typeof _liveGuardCheck === 'function') _liveGuardCheck();
+    const _gT1 = performance.now();
 
-    // Capture temporal K frame every tick (tracks lattice state movie)
-    if (typeof captureTemporalFrame === 'function') captureTemporalFrame();
+    // Temporal K removed — was 141ms/tick (56% of tick time). LZ76 O(n³) on growing string.
+    const _gT2 = performance.now();
 
-    // Update UI at window boundaries (every 4 ticks)
+    // Update UI — demo panel every window boundary, full status every 4th window
+    // (updateStatus has invariant checks + K-complexity = ~192ms per call)
     if (_demoTick % WINDOW_LEN === 0) {
         updateDemoPanel();
-        updateStatus();
+        if (_demoTick % (WINDOW_LEN * 4) === 0) updateStatus();
     }
 
     // Tournament hook: check if trial has reached its target tick
     if (typeof _tournamentTickCheck === 'function') _tournamentTickCheck();
+    const _gT3 = performance.now();
+
+    _profPhases.guards += _gT1 - _gT0;
+    _profPhases._temporalK = (_profPhases._temporalK || 0) + (_gT2 - _gT1);
+    _profPhases._uiUpdate = (_profPhases._uiUpdate || 0) + (_gT3 - _gT2);
+
+    // ─── Profiling: record tick time ───
+    const _tickDt = performance.now() - _tickT0;
+    _tickTotalMs += _tickDt;
+    _tickCount++;
+    if (_tickDt > _tickMaxMs) _tickMaxMs = _tickDt;
+
+    // Auto-dump every 50 ticks
+    if (_tickCount > 0 && _tickCount % 50 === 0) dumpProfile();
+
     } finally {
         _tickInProgress = false;
     }
+}
+
+function dumpProfile() {
+    if (_tickCount === 0) { console.log('[PROFILE] No ticks recorded'); return; }
+    const n = _tickCount;
+    const total = _tickTotalMs;
+    const ph = _profPhases;
+    const phaseTot = ph.wb + ph.p0 + ph.p05 + ph.p1 + ph.p2 + ph.p3 + ph.p3b + ph.p4 + ph.p5 + ph.solver + ph.render + ph.guards + (ph._temporalK||0) + (ph._uiUpdate||0);
+    const pct = (v) => ((v / total) * 100).toFixed(1) + '%';
+    const avg = (v) => (v / n).toFixed(1);
+    console.log(`\n[PROFILE] ${n} ticks, total ${(total/1000).toFixed(1)}s, avg ${avg(total)}ms/tick, max ${_tickMaxMs.toFixed(0)}ms`);
+    console.log(`  WB(setup):  ${avg(ph.wb)}ms/tick  ${pct(ph.wb)}`);
+    console.log(`  PHASE 0:    ${avg(ph.p0)}ms/tick  ${pct(ph.p0)}`);
+    console.log(`  PHASE 0.5:  ${avg(ph.p05)}ms/tick  ${pct(ph.p05)}`);
+    console.log(`  PHASE 1:    ${avg(ph.p1)}ms/tick  ${pct(ph.p1)}`);
+    console.log(`  PHASE 2:    ${avg(ph.p2)}ms/tick  ${pct(ph.p2)}  (gpuBatch: ${avg(ph.gpuBatch||0)}ms)`);
+    console.log(`  PHASE 3:    ${avg(ph.p3)}ms/tick  ${pct(ph.p3)}`);
+    console.log(`  PHASE 3b:   ${avg(ph.p3b)}ms/tick  ${pct(ph.p3b)}`);
+    console.log(`  PHASE 4:    ${avg(ph.p4)}ms/tick  ${pct(ph.p4)}`);
+    console.log(`  PHASE 5:    ${avg(ph.p5)}ms/tick  ${pct(ph.p5)}`);
+    console.log(`  Solver+glu: ${avg(ph.solver)}ms/tick  ${pct(ph.solver)}`);
+    console.log(`  Render:     ${avg(ph.render)}ms/tick  ${pct(ph.render)}`);
+    console.log(`  Guards:     ${avg(ph.guards)}ms/tick  ${pct(ph.guards)}`);
+    console.log(`  TemporalK:  ${avg(ph._temporalK||0)}ms/tick  ${pct(ph._temporalK||0)}`);
+    console.log(`  UI update:  ${avg(ph._uiUpdate||0)}ms/tick  ${pct(ph._uiUpdate||0)}`);
+    console.log(`  Accounted:  ${avg(phaseTot)}ms/tick  ${pct(phaseTot)}`);
+    if (typeof _solveCallCount !== 'undefined') {
+        console.log(`  _solve() calls: ${_solveCallCount} (${(_solveCallCount/n).toFixed(1)}/tick), avg ${_solveCallCount?(_solveTotalMs/_solveCallCount).toFixed(1):'0'}ms`);
+    }
+    if (typeof _cmqCallCount !== 'undefined') {
+        console.log(`  CMQ: ${_cmqCallCount} calls, ${_cmqCpuCount} CPU, ${_cmqCacheHits} cached, avg ${_cmqCpuCount?(_cmqTotalMs/_cmqCpuCount).toFixed(1):'0'}ms/CPU`);
+    }
+}
+
+function resetProfile() {
+    _tickTotalMs = 0; _tickCount = 0; _tickMaxMs = 0;
+    for (const k in _profPhases) _profPhases[k] = 0;
+    if (typeof _solveCallCount !== 'undefined') { _solveCallCount = 0; _solveTotalMs = 0; _solveMaxMs = 0; _solveIterTotal = 0; }
+    if (typeof _cmqCallCount !== 'undefined') { _cmqCallCount = 0; _cmqCpuCount = 0; _cmqCacheHits = 0; _cmqTotalMs = 0; }
+    console.log('[PROFILE] Counters reset');
 }
 
 function updateDemoPanel() {
