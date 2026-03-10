@@ -115,6 +115,15 @@ let _cmqCallCount = 0, _cmqCpuCount = 0, _cmqCacheHits = 0, _cmqTotalMs = 0;
 function canMaterialiseQuick(scId){
     _cmqCallCount++;
     if(activeSet.has(scId)||impliedSet.has(scId)||xonImpliedSet.has(scId)) return true;
+    // Fast rejection: SC endpoints must be near the ideal FCC shortcut
+    // length 2/sqrt(3) ≈ 1.1547 (unactivated) or already at unit length.
+    const _sc=SC_BY_ID[scId];
+    if(_sc && pos[_sc.a] && pos[_sc.b]){
+        const _dx=pos[_sc.b][0]-pos[_sc.a][0],_dy=pos[_sc.b][1]-pos[_sc.a][1],_dz=pos[_sc.b][2]-pos[_sc.a][2];
+        const _dist=Math.sqrt(_dx*_dx+_dy*_dy+_dz*_dz);
+        const _SC_IDEAL=2/Math.sqrt(3); // 1.1547
+        if(Math.abs(_dist-1)>0.05 && Math.abs(_dist-_SC_IDEAL)>0.10) return false;
+    }
     // Check GPU batch cache first (avoids redundant CPU solve)
     if (typeof SolverProxy !== 'undefined' && SolverProxy.isReady()) {
         const cached = SolverProxy.getBatchResult(scId);

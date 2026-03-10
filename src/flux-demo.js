@@ -1,4 +1,37 @@
 // flux-demo.js — Demo mode: pattern computation, xon management, demo loop
+
+// ── Locality filter: only return SCs whose endpoints are approximately unit-length apart ──
+// This prevents non-local SC candidates from entering ANY decision path.
+// Threshold 0.50: rejects teleportation-range (d > 1.5) but allows pre-solver SC edges (~1.15).
+function _localScNeighbors(node) {
+    const scs = scByVert[node] || [];
+    const pa = pos[node];
+    if (!pa) return scs; // pos not ready yet (pre-lattice)
+    return scs.filter(sc => {
+        const other = sc.a === node ? sc.b : sc.a;
+        const pb = pos[other];
+        if (!pb) return false;
+        const dx = pb[0]-pa[0], dy = pb[1]-pa[1], dz = pb[2]-pa[2];
+        return Math.abs(Math.sqrt(dx*dx + dy*dy + dz*dz) - 1) <= 0.50;
+    });
+}
+
+// ── Oct-distance helper: sort neighbors by proximity to nearest oct node ──
+// Used by weak force paths to prevent wandering away from the nucleus.
+function _distToNearestOct(node) {
+    if (!_octNodeSet || !pos[node]) return Infinity;
+    if (_octNodeSet.has(node)) return 0;
+    let best = Infinity;
+    for (const octN of _octNodeSet) {
+        const p = pos[octN];
+        if (!p) continue;
+        const dx = pos[node][0]-p[0], dy = pos[node][1]-p[1], dz = pos[node][2]-p[2];
+        const d = dx*dx + dy*dy + dz*dz; // squared distance (no sqrt needed for comparison)
+        if (d < best) best = d;
+    }
+    return best;
+}
+
 function computeActivationPatterns() {
     const A = [1, 3, 6, 8];
     const B = [2, 4, 5, 7];
@@ -248,11 +281,33 @@ let _flashEnabled = false;
 // Used by T41/T26/T27 diagnostics and future debugging.
 const _moveTrace = []; // [{xonIdx, from, to, path, mode, tick}] — current tick only
 const _moveTraceHistory = []; // rolling 5-tick history for dump audits
+// Set of all legitimate nucleus nodes (oct cage + tet face vertices).
+// Built lazily on first _traceMove call to ensure all nucleus data is ready.
+let _nucleusNodeSet = null;
+function _ensureNucleusNodeSet() {
+    if (_nucleusNodeSet) return;
+    if (!_octNodeSet || _octNodeSet.size === 0) return; // not ready yet
+    if (!_nucleusTetFaceData) return;
+    _nucleusNodeSet = new Set(_octNodeSet);
+    for (let f = 1; f <= 8; f++) {
+        const fd = _nucleusTetFaceData[f];
+        if (fd) for (const n of fd.allNodes) _nucleusNodeSet.add(n);
+    }
+    console.log(`[FLASHLIGHT] Nucleus node set: ${_nucleusNodeSet.size} nodes: [${Array.from(_nucleusNodeSet).sort((a,b)=>a-b).join(',')}]`);
+}
 function _traceMove(xon, from, to, path) {
     const entry = {xonIdx: _demoXons.indexOf(xon), from, to, path, mode: xon._mode, tick: _demoTick};
     _moveTrace.push(entry);
     _moveTraceHistory.push(entry);
     if (_moveTraceHistory.length > 60) _moveTraceHistory.splice(0, _moveTraceHistory.length - 60);
+    // FLASHLIGHT TRAP: freeze if xon moves to a non-nucleus node
+    _ensureNucleusNodeSet();
+    if (_nucleusNodeSet && !_nucleusNodeSet.has(to)) {
+        console.error(`[FLASHLIGHT] tick=${_demoTick} X${entry.xonIdx} moved ${from}→${to} via "${path}" mode=${xon._mode} face=${xon._assignedFace} quark=${xon._quarkType} loopStep=${xon._loopStep} loopSeq=${JSON.stringify(xon._loopSeq)}`);
+        console.error(`[FLASHLIGHT] nucleus nodes: [${Array.from(_nucleusNodeSet).sort((a,b)=>a-b).join(',')}]`);
+        console.error(`[FLASHLIGHT] FREEZING — node ${to} is outside the nucleus`);
+        simHalted = true;
+    }
 }
 // SC Attribution Registry — tracks why each SC entered xonImpliedSet.
 // Maps scId → { reason, xonIdx, tick, face? }
@@ -399,7 +454,7 @@ function _btExtractExclusions() {
         for (const nb of (baseNeighbors[stuckNode] || [])) {
             if (!_octNodeSet || _octNodeSet.has(nb.node)) exitNodes.add(nb.node);
         }
-        for (const sc of (scByVert[stuckNode] || [])) {
+        for (const sc of _localScNeighbors(stuckNode)) {
             const other = sc.a === stuckNode ? sc.b : sc.a;
             if (!_octNodeSet || _octNodeSet.has(other)) exitNodes.add(other);
         }
@@ -856,7 +911,7 @@ function _initPersistentXons() {
                     const hasBase = (baseNeighbors[from] || []).some(nb => nb.node === v);
                     if (!hasBase) {
                         // Check if there's an SC between them
-                        const scs = scByVert[from] || [];
+                        const scs = _localScNeighbors(from);
                         const hasSC = scs.some(sc => (sc.a === from ? sc.b : sc.a) === v);
                         if (!hasSC) {
                             console.warn(`[MOVEMENT BLOCKED] tick=${_demoTick} xon: ${from}→${v} NO EDGE (not adjacent)`);
@@ -1104,7 +1159,7 @@ function _lookahead(node, occupied, depth, _visited, _selfXon) {
         if (_lookahead(nb.node, occupied, depth - 1, new Set(_visited), _selfXon)) return true;
     }
     // Active SC neighbors — T26: only traverse activated SCs
-    const scs = scByVert[node] || [];
+    const scs = _localScNeighbors(node);
     for (const sc of scs) {
         const other = sc.a === node ? sc.b : sc.a;
         if (_visited.has(other)) continue;
@@ -1115,13 +1170,17 @@ function _lookahead(node, occupied, depth, _visited, _selfXon) {
         if (!(activeSet.has(sc.id) || impliedSet.has(sc.id) || xonImpliedSet.has(sc.id))) continue;
         if (_lookahead(other, occupied, depth - 1, new Set(_visited), _selfXon)) return true;
     }
-    // WEAK FORCE FALLBACK: if all oct-restricted paths fail, any free base neighbor
-    // is a valid escape via the weak force. Check ALL projected guards before accepting.
+    // WEAK FORCE FALLBACK: if all oct-restricted paths fail, a free base neighbor
+    // CLOSE TO the oct cage is a valid escape via the weak force.
+    // Only consider neighbors within 2 hops of an oct node (prevents flashlight).
     for (const nb of nbs) {
         if (_visited.has(nb.node)) continue;
         if (!(occupied.get(nb.node) || 0)) {
             // Structural guard check: reject if move would violate ANY active test
             if (_selfXon && _moveViolatesGuards(_selfXon, node, nb.node)) continue;
+            // Hard filter: only nucleus nodes allowed
+            _ensureNucleusNodeSet();
+            if (_nucleusNodeSet && !_nucleusNodeSet.has(nb.node)) continue;
             return true;
         }
     }
@@ -1469,15 +1528,20 @@ function _getOctCandidates(xon, occupied, blocked) {
     if (!xon.alive) return [];
     if (xon._mode !== 'oct' && xon._mode !== 'weak') return [];
 
-    // Weak xons move freely via base neighbors (not constrained to oct cage)
+    // Weak xons move ONLY to nucleus nodes (oct cage + tet face vertices)
     if (xon._mode === 'weak') {
+        _ensureNucleusNodeSet();
         const candidates = [];
         for (const nb of baseNeighbors[xon.node]) {
             if ((occupied.get(nb.node) || 0) > 0) continue;
             if (blocked && blocked.has(nb.node)) continue;
             if (nb.node === xon.prevNode && xon.prevNode !== xon.node) continue;
+            // Hard filter: only nucleus nodes allowed
+            if (_nucleusNodeSet && !_nucleusNodeSet.has(nb.node)) continue;
             candidates.push({ node: nb.node, dirIdx: nb.dirIdx, score: 1, _scId: undefined, _needsMaterialise: false });
         }
+        // Sort by oct proximity — closest to cage first
+        candidates.sort((a, b) => _distToNearestOct(a.node) - _distToNearestOct(b.node));
         return candidates;
     }
 
@@ -1497,7 +1561,7 @@ function _getOctCandidates(xon, occupied, blocked) {
             allOctNeighbors.push({ node: nb.node, dirIdx: nb.dirIdx });
         }
     }
-    const scs = scByVert[xon.node] || [];
+    const scs = _localScNeighbors(xon.node);
     for (const sc of scs) {
         const other = sc.a === xon.node ? sc.b : sc.a;
         if (_octNodeSet.has(other) && other !== antipodal && !allOctNeighbors.find(n => n.node === other)) {
@@ -1507,10 +1571,6 @@ function _getOctCandidates(xon, occupied, blocked) {
             const dy = pos[other][1] - pos[xon.node][1];
             const dz = pos[other][2] - pos[xon.node][2];
             const d = Math.sqrt(dx*dx + dy*dy + dz*dz) || 1;
-            // Pre-filter: skip grossly non-local SC edges — saves expensive solver calls.
-            // Already-active SCs exempt. Cage SCs exempt (critical for initialization).
-            // Tolerance 0.50: catches teleportation (d>1.5) but allows pre-solver SC edges (~1.15).
-            if (!alreadyActive && !((_octSCIds || []).includes(scId)) && Math.abs(d - 1) > 0.50) continue;
             let bestDir = 0, bestDot = -Infinity;
             for (let k = 0; k < 4; k++) {
                 const v = DIR_VEC[k];
@@ -1792,7 +1852,7 @@ function _walkToFace(xon, targetNodes) {
             queue.push(nb.node);
         }
         if (found) break;
-        const scs = scByVert[curr] || [];
+        const scs = _localScNeighbors(curr);
         for (const sc of scs) {
             if (!activeSet.has(sc.id) && !impliedSet.has(sc.id) && !xonImpliedSet.has(sc.id)) continue;
             const neighbor = sc.a === curr ? sc.b : sc.a;
@@ -2497,6 +2557,7 @@ function startDemoLoop() {
     if (lifespanSlider) { lifespanSlider.value = 13; lifespanSlider.dispatchEvent(new Event('input')); }
     // Spawn 6 persistent xons at center node
     _initPersistentXons();
+    _nucleusNodeSet = null; // reset so lazy builder re-runs on next demo
     _openingPhase = true; // 2-tick opening choreography (ticks 0-1)
 
     // Clear any orphaned timers that the speed slider dispatch (above) may have
@@ -2614,7 +2675,7 @@ function _executeOpeningTick(occupied) {
 
         // Find oct candidates whose equator is a subset of our 6 xon positions
         const validOcts = [];
-        for (const sc of scByVert[center]) {
+        for (const sc of _localScNeighbors(center)) {
             const pole = sc.a === center ? sc.b : sc.a;
             const equator = baseNeighbors[pole].map(nb => nb.node).filter(n => centerBaseNbSet.has(n));
             if (equator.length !== 4) continue;
@@ -2751,7 +2812,7 @@ function _executeOpeningTick(occupied) {
         // ── Free xons: move within 1-step of center ──
         const center1hop = new Set([center]);
         for (const nb of baseNeighbors[center]) center1hop.add(nb.node);
-        for (const sc of scByVert[center]) center1hop.add(sc.a === center ? sc.b : sc.a);
+        for (const sc of _localScNeighbors(center)) center1hop.add(sc.a === center ? sc.b : sc.a);
         const freeXonData = [];
         const takenNodes = new Set(_octEquatorCycle);
         for (let i = 0; i < 6; i++) {
@@ -3045,21 +3106,22 @@ async function demoTick() {
                 if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
             }
         } else {
-            // All BFS steps blocked — try any free neighbor instead
-            const allNbs = baseNeighbors[xon.node] || [];
-            // Tier 1: guard-safe, not in recent trail, not prevNode (best: explore new territory)
+            // All BFS steps blocked — try free neighbor closest to oct cage
+            const allNbs = (baseNeighbors[xon.node] || []).slice()
+                .sort((a, b) => _distToNearestOct(a.node) - _distToNearestOct(b.node));
+            // Tier 1: guard-safe, not in recent trail, not prevNode, closest to oct
             let freeNb = allNbs.find(nb => !(occupied.get(nb.node) || 0) &&
                 !recentTrail.has(nb.node) && nb.node !== xon.prevNode &&
                 !_swapBlocked(xon.node, nb.node) &&
                 !_moveViolatesGuards(xon, xon.node, nb.node));
-            // Tier 2: guard-safe, not prevNode (allow trail revisit)
+            // Tier 2: guard-safe, not prevNode, closest to oct
             if (!freeNb) {
                 freeNb = allNbs.find(nb => !(occupied.get(nb.node) || 0) &&
                     nb.node !== xon.prevNode &&
                     !_swapBlocked(xon.node, nb.node) &&
                     !_moveViolatesGuards(xon, xon.node, nb.node));
             }
-            // Tier 3: guard-safe, allow prevNode (suboptimal but legal)
+            // Tier 3: guard-safe, allow prevNode, closest to oct
             if (!freeNb) {
                 freeNb = allNbs.find(nb => !(occupied.get(nb.node) || 0) &&
                     !_swapBlocked(xon.node, nb.node) &&
@@ -3432,7 +3494,10 @@ async function demoTick() {
                 }
                 // Strategy 2: eject as weak particle (safety valve)
                 if (!ejectedThis) {
-                    const nbs = baseNeighbors[plan.xon.node] || [];
+                    _ensureNucleusNodeSet();
+                    const nbs = (baseNeighbors[plan.xon.node] || []).slice()
+                        .filter(nb => !_nucleusNodeSet || _nucleusNodeSet.has(nb.node))
+                        .sort((a, b) => _distToNearestOct(a.node) - _distToNearestOct(b.node));
                     const freeNb = nbs.find(nb =>
                         !(ejectBlocked.get(nb.node) || 0) &&
                         nb.node !== plan.xon.prevNode
@@ -3585,8 +3650,11 @@ async function demoTick() {
             plan.xon._mode = 'weak';
             plan.xon.col = WEAK_FORCE_COLOR;
             if (plan.xon.sparkMat) plan.xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
-            // Weak xons can move to any base neighbor — find one that's free
-            const nbs = baseNeighbors[plan.xon.node] || [];
+            // Weak xons can only move to nucleus nodes
+            _ensureNucleusNodeSet();
+            const nbs = (baseNeighbors[plan.xon.node] || []).slice()
+                .filter(nb => !_nucleusNodeSet || _nucleusNodeSet.has(nb.node))
+                .sort((a, b) => _distToNearestOct(a.node) - _distToNearestOct(b.node));
             let escaped = false;
             for (const nb of nbs) {
                 if (allBlocked.has(nb.node)) continue;
@@ -3921,9 +3989,10 @@ async function demoTick() {
             // Prefer non-prevNode to avoid bounce
             const nonBounce = freeNbs.filter(nb => nb.node !== xon.prevNode);
             if (nonBounce.length > 0) freeNbs = nonBounce;
+            // Sort by proximity to oct cage (closest first) — prevents wandering
+            freeNbs.sort((a, b) => _distToNearestOct(a.node) - _distToNearestOct(b.node));
             if (freeNbs.length > 0) {
-                // Pick a random free neighbor (weak force is stochastic)
-                const nb = freeNbs[Math.floor(Math.random() * freeNbs.length)];
+                const nb = freeNbs[0]; // closest to oct cage
                 const fromWe = xon.node;
                 _occDel(occupied, xon.node);
                 xon.prevNode = xon.node;
@@ -4081,7 +4150,9 @@ async function demoTick() {
             // When all oct-constrained options fail, the xon breaks confinement.
             // Enters 'weak' mode with purple trail/sparkle.
             if (!moved) {
-                const allNbs = baseNeighbors[xon.node] || [];
+                _ensureNucleusNodeSet();
+                const allNbs = (baseNeighbors[xon.node] || [])
+                    .filter(nb => !_nucleusNodeSet || _nucleusNodeSet.has(nb.node));
                 // ALL projected guards — no bypass allowed
                 let freeNbs = allNbs.filter(nb => !(occupied.get(nb.node) || 0) &&
                     !_swapBlocked(xon.node, nb.node) &&
@@ -4089,8 +4160,10 @@ async function demoTick() {
                 // Prefer non-prevNode to avoid bounce
                 const nonBounce3b = freeNbs.filter(nb => nb.node !== xon.prevNode);
                 if (nonBounce3b.length > 0) freeNbs = nonBounce3b;
+                // Sort by oct proximity — closest to cage first
+                freeNbs.sort((a, b) => _distToNearestOct(a.node) - _distToNearestOct(b.node));
                 if (freeNbs.length > 0) {
-                    const nb = freeNbs[Math.floor(Math.random() * freeNbs.length)];
+                    const nb = freeNbs[0]; // closest to oct cage
                     const from3bw = xon.node;
                     _occDel(occupied, xon.node);
                     xon.prevNode = xon.node;
@@ -4155,7 +4228,7 @@ async function demoTick() {
         const scatterAntipodal = _octAntipodal.get(xon.node);
         const allNb = (baseNeighbors[xon.node] || []).filter(nb =>
             (!_octNodeSet || _octNodeSet.has(nb.node)) && nb.node !== scatterAntipodal);
-        const scNb = (scByVert[xon.node] || [])
+        const scNb = _localScNeighbors(xon.node)
             .filter(sc => activeSet.has(sc.id) || impliedSet.has(sc.id) || xonImpliedSet.has(sc.id))
             .map(sc => sc.a === xon.node ? sc.b : sc.a)
             .filter(n => (!_octNodeSet || _octNodeSet.has(n)) && n !== scatterAntipodal);
@@ -4244,7 +4317,10 @@ async function demoTick() {
             const stillHere = _demoXons.filter(x => x.alive && x.node === cNode);
             while (stillHere.length > 1) {
                 const xon = stillHere.pop();
-                const allNbs = baseNeighbors[xon.node] || [];
+                _ensureNucleusNodeSet();
+                const allNbs = (baseNeighbors[xon.node] || []).slice()
+                    .filter(nb => !_nucleusNodeSet || _nucleusNodeSet.has(nb.node))
+                    .sort((a, b) => _distToNearestOct(a.node) - _distToNearestOct(b.node));
                 // ALL projected guards — no bypass allowed
                 let freeNb = allNbs.find(nb => !(occupied.get(nb.node) || 0) &&
                     nb.node !== xon.prevNode &&
@@ -4322,8 +4398,10 @@ async function demoTick() {
             // Prefer non-prevNode to avoid bounce
             const nonBounceSN = freeNbs.filter(nb => nb.node !== xon.prevNode);
             if (nonBounceSN.length > 0) freeNbs = nonBounceSN;
+            // Sort by proximity to oct cage — prevents wandering
+            freeNbs.sort((a, b) => _distToNearestOct(a.node) - _distToNearestOct(b.node));
             if (freeNbs.length > 0) {
-                const nb = freeNbs[Math.floor(Math.random() * freeNbs.length)];
+                const nb = freeNbs[0]; // closest to oct cage
                 const fromSN = xon.node;
                 _occDel(occupied, xon.node);
                 xon.prevNode = xon.node;
