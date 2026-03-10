@@ -858,6 +858,25 @@ const LIVE_GUARD_REGISTRY = [
         return null;
       }
     },
+    // T59: Trail continuity — every xon's current node must match its last trail entry.
+    // If they diverge, the trail head renderer draws a line from the last frozen position
+    // to the current interpolated position, creating a visible "teleport" segment.
+    { id: 'T59', name: 'Trail head matches node',
+      check(tick, g) {
+        if (g.ok === null && tick >= LIVE_GUARD_GRACE) { g.ok = true; g.msg = ''; }
+        if (!_demoXons) return null;
+        for (let xi = 0; xi < _demoXons.length; xi++) {
+          const xon = _demoXons[xi];
+          if (!xon.alive) continue;
+          if (!xon.trail || xon.trail.length === 0) continue;
+          const lastTrail = xon.trail[xon.trail.length - 1];
+          if (xon.node !== lastTrail) {
+            return `tick ${tick}: X${xi} at node ${xon.node} but trail ends at ${lastTrail}`;
+          }
+        }
+        return null;
+      }
+    },
 ];
 
 // ── Auto-derived from registry ──

@@ -2198,10 +2198,18 @@ function _tickDemoXons(dt) {
         const s = 1 - (1 - xon.tweenT) ** 3;
         const pf = pos[xon.prevNode], pt = pos[xon.node];
         if (pf && pt) {
-            const px = pf[0] + (pt[0] - pf[0]) * s;
-            const py = pf[1] + (pt[1] - pf[1]) * s;
-            const pz = pf[2] + (pt[2] - pf[2]) * s;
-            xon.group.position.set(px, py, pz);
+            // Distance check: if prevNode→node exceeds valid hop distance,
+            // hold at source (don't flash sprite at non-adjacent target)
+            const _tdx = pt[0] - pf[0], _tdy = pt[1] - pf[1], _tdz = pt[2] - pf[2];
+            const _hopDist = Math.sqrt(_tdx*_tdx + _tdy*_tdy + _tdz*_tdz);
+            if (_hopDist > 1.2) {
+                xon.group.position.set(pf[0], pf[1], pf[2]);
+            } else {
+                const px = pf[0] + (pt[0] - pf[0]) * s;
+                const py = pf[1] + (pt[1] - pf[1]) * s;
+                const pz = pf[2] + (pt[2] - pf[2]) * s;
+                xon.group.position.set(px, py, pz);
+            }
         }
 
         // Sparkle flash + flicker
@@ -2222,14 +2230,37 @@ function _tickDemoXons(dt) {
         const fullLen = xon.trail.length;
         const visLen = Math.min(fullLen, lifespan);
         const startIdx = fullLen - visLen; // skip older points beyond lifespan
+
+        // During tween (tweenT < 1), the latest trail entry is the DESTINATION
+        // which the sprite hasn't reached yet. Rendering it in the body creates
+        // a backward line from destination back to sprite. Fix: exclude the
+        // latest entry during tween and let the trail head animate the hop.
+        const bodyLen = (xon.tweenT < 1 && visLen > 1) ? visLen - 1 : visLen;
+
         // Per-segment color from trailColHistory — segments retain their original color
         // flashT boosts trail brightness near the head (mode transition / birth flash)
         xon._lastTrailFlashBoost = 0; // reset per frame for T37 measurement
-        for (let vi = 0; vi < visLen; vi++) {
+        for (let vi = 0; vi < bodyLen; vi++) {
             const i = startIdx + vi;
             // Use frozen positions (recorded at trail push time) so trails don't deform with solver
             const np = (xon._trailFrozenPos && xon._trailFrozenPos[i]) || pos[xon.trail[i]];
             if (!np) continue;
+            // Teleport suppression: if this segment jumps > 1.5 from previous point,
+            // collapse to previous point (zero-length segment hides the teleport line)
+            if (vi > 0) {
+                const _spx = xon.trailPos[(vi-1) * 3], _spy = xon.trailPos[(vi-1) * 3 + 1], _spz = xon.trailPos[(vi-1) * 3 + 2];
+                const _sdx = np[0] - _spx, _sdy = np[1] - _spy, _sdz = np[2] - _spz;
+                if (_sdx*_sdx + _sdy*_sdy + _sdz*_sdz > 1.44) { // 1.2^2
+                    xon.trailPos[vi * 3] = _spx;
+                    xon.trailPos[vi * 3 + 1] = _spy;
+                    xon.trailPos[vi * 3 + 2] = _spz;
+                    // Zero alpha to fully hide collapsed point
+                    xon.trailCol[vi * 3] = 0;
+                    xon.trailCol[vi * 3 + 1] = 0;
+                    xon.trailCol[vi * 3 + 2] = 0;
+                    continue;
+                }
+            }
             xon.trailPos[vi * 3] = np[0];
             xon.trailPos[vi * 3 + 1] = np[1];
             xon.trailPos[vi * 3 + 2] = np[2];
@@ -2237,9 +2268,9 @@ function _tickDemoXons(dt) {
             const cr = ((segCol >> 16) & 0xff) / 255;
             const cg = ((segCol >> 8) & 0xff) / 255;
             const cb = (segCol & 0xff) / 255;
-            const baseAlpha = 0.15 + 0.85 * (vi / Math.max(visLen, 1)) ** 1.6;
+            const baseAlpha = 0.15 + 0.85 * (vi / Math.max(bodyLen, 1)) ** 1.6;
             // Flash boost: head segments get up to 40% brighter during flash
-            const headProximity = vi / Math.max(visLen - 1, 1); // 0=tail, 1=head
+            const headProximity = vi / Math.max(bodyLen - 1, 1); // 0=tail, 1=head
             const flashBoost = xon.flashT * 0.4 * headProximity;
             xon._lastTrailFlashBoost = Math.max(xon._lastTrailFlashBoost || 0, flashBoost);
             const alpha = sparkOp * Math.min(1, baseAlpha + flashBoost);
@@ -2247,21 +2278,34 @@ function _tickDemoXons(dt) {
             xon.trailCol[vi * 3 + 1] = cg * alpha;
             xon.trailCol[vi * 3 + 2] = cb * alpha;
         }
-        // Current interpolated position as trail head
-        const last = visLen;
-        if (last < XON_TRAIL_LENGTH) {
-            xon.trailPos[last * 3] = xon.group.position.x;
-            xon.trailPos[last * 3 + 1] = xon.group.position.y;
-            xon.trailPos[last * 3 + 2] = xon.group.position.z;
-            const headCol = xon.col;
-            const hcr = ((headCol >> 16) & 0xff) / 255;
-            const hcg = ((headCol >> 8) & 0xff) / 255;
-            const hcb = (headCol & 0xff) / 255;
-            xon.trailCol[last * 3] = hcr * sparkOp;
-            xon.trailCol[last * 3 + 1] = hcg * sparkOp;
-            xon.trailCol[last * 3 + 2] = hcb * sparkOp;
+        // Current interpolated position as trail head — extends from last BODY
+        // entry toward sprite. During tween this smoothly animates the hop.
+        const last = bodyLen;
+        let _drawHead = false;
+        if (last < XON_TRAIL_LENGTH && bodyLen > 0) {
+            // Distance from last body point to current group position
+            const _lfi = startIdx + bodyLen - 1;
+            const _lfp = (xon._trailFrozenPos && xon._trailFrozenPos[_lfi]) || pos[xon.trail[startIdx + bodyLen - 1]];
+            if (_lfp) {
+                const _hdx = xon.group.position.x - _lfp[0];
+                const _hdy = xon.group.position.y - _lfp[1];
+                const _hdz = xon.group.position.z - _lfp[2];
+                if (_hdx*_hdx + _hdy*_hdy + _hdz*_hdz <= 1.44) { // 1.2^2
+                    _drawHead = true;
+                    xon.trailPos[last * 3] = xon.group.position.x;
+                    xon.trailPos[last * 3 + 1] = xon.group.position.y;
+                    xon.trailPos[last * 3 + 2] = xon.group.position.z;
+                    const headCol = xon.col;
+                    const hcr = ((headCol >> 16) & 0xff) / 255;
+                    const hcg = ((headCol >> 8) & 0xff) / 255;
+                    const hcb = (headCol & 0xff) / 255;
+                    xon.trailCol[last * 3] = hcr * sparkOp;
+                    xon.trailCol[last * 3 + 1] = hcg * sparkOp;
+                    xon.trailCol[last * 3 + 2] = hcb * sparkOp;
+                }
+            }
         }
-        const n = visLen + 1;
+        const n = _drawHead ? bodyLen + 1 : bodyLen;
         xon.trailGeo.setDrawRange(0, Math.min(n, XON_TRAIL_LENGTH));
         xon.trailGeo.attributes.position.needsUpdate = true;
         xon.trailGeo.attributes.color.needsUpdate = true;
