@@ -2579,26 +2579,26 @@ function _executeOpeningTick(occupied) {
     const center = _octSeedCenter;
 
     if (_demoTick === 0) {
-        // ── Tick 0: 4 xons → below center (z-axis), 2 → above center ──
-        // Deterministic: sort by z, lowest 4 go to equatorial formation.
-        const cz = pos[center][2];
+        // ── Tick 0: 4 xons → below center (y-axis), 2 → above center ──
+        // Deterministic: sort by y, lowest 4 go to equatorial formation.
+        const cy = pos[center][1];
         const allNbs = baseNeighbors[center].slice();
-        const belowZ = allNbs.filter(nb => pos[nb.node][2] < cz);
-        const aboveZ = allNbs.filter(nb => pos[nb.node][2] >= cz);
-        // Sort each group by z for determinism (lowest first)
-        belowZ.sort((a, b) => pos[a.node][2] - pos[b.node][2]);
-        aboveZ.sort((a, b) => pos[a.node][2] - pos[b.node][2]);
+        const belowY = allNbs.filter(nb => pos[nb.node][1] < cy);
+        const aboveY = allNbs.filter(nb => pos[nb.node][1] >= cy);
+        // Sort each group by y for determinism (lowest first)
+        belowY.sort((a, b) => pos[a.node][1] - pos[b.node][1]);
+        aboveY.sort((a, b) => pos[a.node][1] - pos[b.node][1]);
 
         // First 4 xons → below center (equatorial square formation)
-        for (let i = 0; i < 4 && i < belowZ.length; i++) {
+        for (let i = 0; i < 4 && i < belowY.length; i++) {
             const xon = _demoXons[i];
-            const pick = belowZ[i];
+            const pick = belowY[i];
             _executeOctMove(xon, { node: pick.node, dirIdx: pick.dirIdx, _needsMaterialise: false, _scId: undefined });
         }
         // Remaining 2 xons → above center
-        for (let i = 0; i < 2 && i < aboveZ.length; i++) {
+        for (let i = 0; i < 2 && i < aboveY.length; i++) {
             const xon = _demoXons[4 + i];
-            const pick = aboveZ[i];
+            const pick = aboveY[i];
             _executeOctMove(xon, { node: pick.node, dirIdx: pick.dirIdx, _needsMaterialise: false, _scId: undefined });
         }
 
@@ -2631,12 +2631,12 @@ function _executeOpeningTick(occupied) {
             return;
         }
 
-        // Deterministic: pick the oct whose equator has lowest average z
+        // Deterministic: pick the oct whose equator has lowest average y
         // (the one the 4 below-center xons naturally form)
         const chosen = validOcts.reduce((best, oct) => {
-            const zAvg = oct.equator.reduce((s, n) => s + pos[n][2], 0) / 4;
-            const bestZAvg = best.equator.reduce((s, n) => s + pos[n][2], 0) / 4;
-            return zAvg < bestZAvg ? oct : best;
+            const yAvg = oct.equator.reduce((s, n) => s + pos[n][1], 0) / 4;
+            const bestYAvg = best.equator.reduce((s, n) => s + pos[n][1], 0) / 4;
+            return yAvg < bestYAvg ? oct : best;
         });
         const equatorSet = new Set(chosen.equator);
 
