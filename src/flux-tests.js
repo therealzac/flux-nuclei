@@ -820,8 +820,9 @@ const LIVE_GUARD_REGISTRY = [
     },
 
     // T58: Tet coloring matches actualization — shapes layer only colors tets
-    // that count toward hadronic averaging (_tetActualized = true on the assigned xon).
-    { id: 'T58', name: 'Tet color only when actualized',
+    // whose xon has completed the loop (step >= 4) AND was actualized.
+    // This matches the _demoVisits gate: colored = counted in hadronic balance.
+    { id: 'T58', name: 'Tet color only on completion',
       check(tick, g) {
         if (g.ok === null && tick >= LIVE_GUARD_GRACE) { g.ok = true; g.msg = ''; }
         if (!_nucleusTetFaceData || !_ruleAnnotations) return null;
@@ -842,7 +843,16 @@ const LIVE_GUARD_REGISTRY = [
             return `tick ${tick}: face ${fId} colored (opacity ${opacity.toFixed(2)}) but no xon assigned`;
           }
           if (!assignedXon._tetActualized) {
-            return `tick ${tick}: face ${fId} colored but xon not actualized (mode=${assignedXon._mode}, step=${assignedXon._loopStep})`;
+            return `tick ${tick}: face ${fId} colored but xon not actualized (step=${assignedXon._loopStep})`;
+          }
+          if (assignedXon._loopStep < 4) {
+            return `tick ${tick}: face ${fId} colored at step ${assignedXon._loopStep} (must be 4)`;
+          }
+          // SCs must be active right now
+          const scsOk = fd.scIds.every(scId =>
+            activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId));
+          if (!scsOk) {
+            return `tick ${tick}: face ${fId} colored but face SCs not all active`;
           }
         }
         return null;

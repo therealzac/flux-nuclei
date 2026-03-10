@@ -4594,12 +4594,16 @@ async function demoTick() {
         for (const [fIdStr, fd] of Object.entries(_nucleusTetFaceData)) {
             const fId = parseInt(fIdStr);
             const active = activeFaces.get(fId);
-            // T58: only color tet faces that count toward hadronic averaging
-            // (xon's _tetActualized flag must be true — same gate as _demoVisits)
-            if (active && active.actualized) {
+            // T58: only color tet faces that have COMPLETED a loop and counted
+            // in the hadronic balance. loopStep === 4 is the completion tick
+            // (same gate as _demoVisits increment in _advanceXon).
+            // SCs must also be active right now to confirm genuine actualization.
+            const completedNow = active && active.actualized && active.loopStep >= 4
+                && fd.scIds.every(scId =>
+                    activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId));
+            if (completedNow) {
                 _ruleAnnotations.tetColors.set(fd.voidIdx, QUARK_COLORS[active.quarkType]);
-                const opacity = 0.3 + (active.loopStep / 4) * 0.55;
-                _ruleAnnotations.tetOpacity.set(fd.voidIdx, opacity);
+                _ruleAnnotations.tetOpacity.set(fd.voidIdx, 0.85);
             } else {
                 _ruleAnnotations.tetColors.set(fd.voidIdx, 0x1a1a2a);
                 _ruleAnnotations.tetOpacity.set(fd.voidIdx, 0.0);
