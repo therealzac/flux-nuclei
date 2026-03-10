@@ -767,6 +767,41 @@ const LIVE_GUARD_REGISTRY = [
         return null;
       }
     },
+    { id: 'T57', name: 'Tracer segments unit-length',
+      projected(states) {
+        const tol = 0.05;
+        const violations = [];
+        for (const s of states) {
+          if (s.futureNode === s.fromNode) continue;
+          const a = pos[s.fromNode], b = pos[s.futureNode];
+          if (!a || !b) continue;
+          const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
+          const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+          if (Math.abs(dist - 1) > tol) {
+            violations.push({ guard: 'T57', xon: s.xon, msg: `segment len=${dist.toFixed(4)} (${s.fromNode}→${s.futureNode})` });
+          }
+        }
+        return violations.length ? violations : null;
+      },
+      check(tick, g, ctx) {
+        if (!ctx.prev) return null;
+        const tol = 0.05;
+        // Check only THIS tick's move using current solver positions
+        for (const { xon, node: fromNode } of ctx.prev) {
+          if (!xon.alive) continue;
+          const toNode = xon.node;
+          if (toNode === fromNode) continue;
+          const a = pos[fromNode], b = pos[toNode];
+          if (!a || !b) continue;
+          const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
+          const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+          if (Math.abs(dist - 1) > tol) {
+            return `tick ${tick}: tracer segment len=${dist.toFixed(4)} (nodes ${fromNode}→${toNode})`;
+          }
+        }
+        return null;
+      }
+    },
 ];
 
 // ── Auto-derived from registry ──
