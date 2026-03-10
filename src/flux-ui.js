@@ -265,7 +265,7 @@ function raycast(e){
 }
 
 // ─── Camera orbit / pan ───────────────────────────────────────────────────────
-let sph={theta:0.7,phi:1.1,r:7.5},orbitFrom=null,isDrag=false,dragMoved=false,downX=0,downY=0;
+let sph={theta:4.714,phi:1.058,r:7.5},orbitFrom=null,isDrag=false,dragMoved=false,downX=0,downY=0;
 let panTarget={x:0,y:0,z:0};
 let isGrabMode=false;
 function applyCamera(){ camera.position.set(panTarget.x+sph.r*Math.sin(sph.phi)*Math.sin(sph.theta),panTarget.y+sph.r*Math.cos(sph.phi),panTarget.z+sph.r*Math.sin(sph.phi)*Math.cos(sph.theta)); camera.lookAt(panTarget.x,panTarget.y,panTarget.z); }
@@ -387,6 +387,9 @@ window.addEventListener('keydown',e=>{
     // V2 keyboard shortcuts
     if(e.key === 'n' || e.key === 'N'){
         if(typeof NucleusSimulator !== 'undefined') NucleusSimulator.simulateNucleus();
+    }
+    if(e.key === 'c' || e.key === 'C'){
+        console.log(`[CAMERA] sph={theta:${sph.theta.toFixed(4)}, phi:${sph.phi.toFixed(4)}, r:${sph.r.toFixed(4)}} panTarget={x:${panTarget.x.toFixed(4)}, y:${panTarget.y.toFixed(4)}, z:${panTarget.z.toFixed(4)}}`);
     }
 });
 

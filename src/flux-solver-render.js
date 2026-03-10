@@ -948,7 +948,6 @@ function updateLatticeLevel(){
     rebuildBaseLines();
     rebuildShortcutLines();
     applySphereOpacity();
-    sph.r=Math.max(7.5,latticeLevel*3.2);
     applyCamera();
     bumpState();
     resetTemporalK();

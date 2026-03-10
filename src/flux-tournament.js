@@ -170,8 +170,6 @@ function startTournament(){
         const sl = document.getElementById(sid);
         if(sl){ sl.value = val; sl.dispatchEvent(new Event('input')); }
     }
-    // Zoom out for better overview
-    sph.r = Math.max(12, sph.r);
     applyCamera();
 
     // Install first algorithm — runs deuteron sim fresh

@@ -2545,8 +2545,6 @@ function startDemoLoop() {
             panTarget.z = cz / count;
         }
     }
-    sph.r = Math.max(12, latticeLevel * 4.5);
-    sph.phi = Math.PI / 2; // eye level — look at cage horizontally
     applyCamera();
 
     // Default to maximum speed (uncapped)
