@@ -4546,10 +4546,13 @@ async function demoTick() {
             _btRestoreSnapshot(olderSnap);
             _logChoreo(`BACKTRACK depth ${_btDepth}: rewound to tick ${rewindToTick}, ledger has ${_btBadMoveLedger.size} tick entries`);
         } else {
-            // Restore current tick's snapshot and retry with exclusions
+            // Restore current tick's snapshot and retry with rotation.
+            // Clear this tick's ledger — rotation provides variation between
+            // same-tick retries. Ledger only carries across depth levels.
+            _btBadMoveLedger.delete(currentTick);
             const snap = _btSnapshots[_btSnapshots.length - 1];
             _btRestoreSnapshot(snap);
-            _logChoreo(`BACKTRACK retry ${_btRetryCount}/${_BT_MAX_RETRIES}: ledger[${currentTick}] has ${ledger.size} exclusions`);
+            _logChoreo(`BACKTRACK retry ${_btRetryCount}/${_BT_MAX_RETRIES} (ledger cleared for tick ${currentTick})`);
         }
         continue; // retry the tick
     }
