@@ -2558,45 +2558,42 @@ const QUARK_COLORS = { pu: 0xffdd44, pd: 0x44cc66, nu: 0x4488ff, nd: 0xff4444 };
 const A_SET = new Set([1, 3, 6, 8]);
 
 // ─── 2-Tick Opening Choreography ─────────────────────────────────────────
-// Tick 0: 4 xons move center → equatorial nodes (base edges).
-//         2 free xons move to other base neighbors (base-only, no SCs).
-// Tick 1: 4 xons merry-go-round one position around equatorial square (cage SCs).
-//         2 free xons stay within 1-step of center (base-only).
+// The oct is DISCOVERED through choreography, not imposed.
+// Tick 0: 4 xons move center → 4 base neighbors below center (z-axis).
+//         2 free xons move to other base neighbors above center.
+//         The 4 below-z nodes form a shortcut-connected equatorial square.
+// Tick 1: Discover the oct from the 6 xon positions.
+//         4 equatorial xons merry-go-round via cage SCs.
+//         2 free xons stay within 1-step of center.
 function _executeOpeningTick(occupied) {
     const center = _octSeedCenter;
 
     if (_demoTick === 0) {
-        // ── Tick 0: 4 xons → down equatorial nodes, 2 xons → random others ──
-        // The 4 base neighbors of center below it in Y (visual vertical, camera.up=Y)
-        // form a valid equatorial square (connected by 4 cage SCs), guaranteeing the
-        // merry-go-round at tick 1 will always succeed. Center is the top of the oct.
-        const cy = pos[center][1];
+        // ── Tick 0: 4 xons → below center (z-axis), 2 → above center ──
+        // Deterministic: sort by z, lowest 4 go to equatorial formation.
+        const cz = pos[center][2];
         const allNbs = baseNeighbors[center].slice();
-        const downY = allNbs.filter(nb => pos[nb.node][1] < cy);
-        const upY   = allNbs.filter(nb => pos[nb.node][1] >= cy);
-        // Shuffle within each group for variety
-        for (let i = downY.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [downY[i], downY[j]] = [downY[j], downY[i]];
-        }
-        for (let i = upY.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [upY[i], upY[j]] = [upY[j], upY[i]];
-        }
-        // First 4 xons → equatorial (below center), remaining 2 → random above
-        for (let i = 0; i < 4; i++) {
+        const belowZ = allNbs.filter(nb => pos[nb.node][2] < cz);
+        const aboveZ = allNbs.filter(nb => pos[nb.node][2] >= cz);
+        // Sort each group by z for determinism (lowest first)
+        belowZ.sort((a, b) => pos[a.node][2] - pos[b.node][2]);
+        aboveZ.sort((a, b) => pos[a.node][2] - pos[b.node][2]);
+
+        // First 4 xons → below center (equatorial square formation)
+        for (let i = 0; i < 4 && i < belowZ.length; i++) {
             const xon = _demoXons[i];
-            const pick = downY[i];
+            const pick = belowZ[i];
             _executeOctMove(xon, { node: pick.node, dirIdx: pick.dirIdx, _needsMaterialise: false, _scId: undefined });
         }
-        for (let i = 0; i < 2 && i < upY.length; i++) {
+        // Remaining 2 xons → above center
+        for (let i = 0; i < 2 && i < aboveZ.length; i++) {
             const xon = _demoXons[4 + i];
-            const pick = upY[i];
+            const pick = aboveZ[i];
             _executeOctMove(xon, { node: pick.node, dirIdx: pick.dirIdx, _needsMaterialise: false, _scId: undefined });
         }
 
     } else if (_demoTick === 1) {
-        // ── Tick 1: Discover oct from the 6 positions, then merry-go-round ──
+        // ── Tick 1: Discover oct from the 6 xon positions, then merry-go-round ──
         const xonNodes = _demoXons.map(x => x.node);
         const xonNodeSet = new Set(xonNodes);
         const centerBaseNbSet = new Set(baseNeighbors[center].map(nb => nb.node));
@@ -2624,10 +2621,16 @@ function _executeOpeningTick(occupied) {
             return;
         }
 
-        const chosen = validOcts[Math.floor(Math.random() * validOcts.length)];
+        // Deterministic: pick the oct whose equator has lowest average z
+        // (the one the 4 below-center xons naturally form)
+        const chosen = validOcts.reduce((best, oct) => {
+            const zAvg = oct.equator.reduce((s, n) => s + pos[n][2], 0) / 4;
+            const bestZAvg = best.equator.reduce((s, n) => s + pos[n][2], 0) / 4;
+            return zAvg < bestZAvg ? oct : best;
+        });
         const equatorSet = new Set(chosen.equator);
 
-        // ── Set up all oct data structures (deferred from simulateNucleus) ──
+        // ── Set up all oct data structures ──
         _octNodeSet = chosen.octNodes;
         _octSCIds = chosen.cageSCIds;
 
@@ -2731,12 +2734,10 @@ function _executeOpeningTick(occupied) {
         }
         for (const { xon, target } of choreoMoves) _executeOctMove(xon, target);
 
-        // ── Free xons: must remain within 1 step of center ──
-        // Include both base neighbors AND SC neighbors (virtual shortcuts)
+        // ── Free xons: move within 1-step of center ──
         const center1hop = new Set([center]);
         for (const nb of baseNeighbors[center]) center1hop.add(nb.node);
         for (const sc of scByVert[center]) center1hop.add(sc.a === center ? sc.b : sc.a);
-        // Collect free xon indices and their candidate lists
         const freeXonData = [];
         const takenNodes = new Set(_octEquatorCycle);
         for (let i = 0; i < 6; i++) {
@@ -2744,16 +2745,15 @@ function _executeOpeningTick(occupied) {
             const xon = _demoXons[i];
             const candidates = baseNeighbors[xon.node].filter(nb =>
                 center1hop.has(nb.node) && !takenNodes.has(nb.node) &&
-                nb.node !== xon.prevNode // respect bounce guard
+                nb.node !== xon.prevNode
             );
             freeXonData.push({ xon, candidates });
         }
-        // Pick destinations that maximize separation between the two free xons
         if (freeXonData.length === 2 && freeXonData[0].candidates.length > 0 && freeXonData[1].candidates.length > 0) {
             let bestPair = null, bestDist = -Infinity;
             for (const c0 of freeXonData[0].candidates) {
                 for (const c1 of freeXonData[1].candidates) {
-                    if (c0.node === c1.node) continue; // can't share a node
+                    if (c0.node === c1.node) continue;
                     const d = Math.hypot(
                         pos[c0.node][0] - pos[c1.node][0],
                         pos[c0.node][1] - pos[c1.node][1],
@@ -2764,28 +2764,24 @@ function _executeOpeningTick(occupied) {
             }
             if (bestPair) {
                 _executeOctMove(freeXonData[0].xon, { node: bestPair[0].node, dirIdx: bestPair[0].dirIdx, _needsMaterialise: false, _scId: undefined });
+                takenNodes.add(bestPair[0].node);
                 _executeOctMove(freeXonData[1].xon, { node: bestPair[1].node, dirIdx: bestPair[1].dirIdx, _needsMaterialise: false, _scId: undefined });
             }
         } else {
-            // Fallback: move each individually
             for (const { xon, candidates } of freeXonData) {
                 if (candidates.length > 0) {
-                    const pick = candidates.reduce((best, nb) => {
-                        const d1 = Math.hypot(pos[nb.node][0]-pos[center][0], pos[nb.node][1]-pos[center][1], pos[nb.node][2]-pos[center][2]);
-                        const d2 = Math.hypot(pos[best.node][0]-pos[center][0], pos[best.node][1]-pos[center][1], pos[best.node][2]-pos[center][2]);
-                        return d1 < d2 ? nb : best;
-                    });
+                    const pick = candidates[0];
                     _executeOctMove(xon, { node: pick.node, dirIdx: pick.dirIdx, _needsMaterialise: false, _scId: undefined });
+                    takenNodes.add(pick.node);
                 }
             }
         }
 
         // ── Transition all xons out of oct_formation mode ──
-        // Equatorial xons → oct (cage formed), free xons → weak
         for (const xon of _demoXons) {
             if (xon._mode !== 'oct_formation') continue;
             if (equatorSet.has(xon.node)) {
-                xon._mode = 'oct'; // cage member
+                xon._mode = 'oct';
             } else {
                 xon._mode = 'weak';
                 xon.col = WEAK_FORCE_COLOR;
@@ -4479,7 +4475,9 @@ async function demoTick() {
         for (const [fIdStr, fd] of Object.entries(_nucleusTetFaceData)) {
             const fId = parseInt(fIdStr);
             const active = activeFaces.get(fId);
-            if (active) {
+            const actualized = active && fd.scIds.every(scId =>
+                activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId));
+            if (actualized) {
                 _ruleAnnotations.tetColors.set(fd.voidIdx, QUARK_COLORS[active.quarkType]);
                 const opacity = 0.3 + (active.loopStep / 4) * 0.55;
                 _ruleAnnotations.tetOpacity.set(fd.voidIdx, opacity);

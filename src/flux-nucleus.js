@@ -305,9 +305,8 @@ const NucleusSimulator = (function(){
         _prevRuleIndex = activeRuleIndex;
         activeRuleIndex = 0; // use first rule (will evolve)
 
-        // 4. Find center node — oct formation is deferred to tick 1
-        //    (stochastic: all 6 xons scatter randomly, then discover which 4
-        //    form an equatorial square for the merry-go-round)
+        // 4. Find center node — oct formation is discovered by the choreography
+        //    at tick 1. Tick 0 sends 4 xons below center (z-axis) to form the equator.
         const center = _findCenterNode();
         _octSeedCenter = center;
         _octNodeSet = null;
@@ -318,7 +317,7 @@ const NucleusSimulator = (function(){
         _octVoidIdx = -1;
         _nucleusTetFaceData = {};
 
-        console.log(`[nucleus] Center=${center}, oct formation deferred to tick 1`);
+        console.log(`[nucleus] Center=${center}, oct will be discovered by choreography at tick 1`);
 
         // 5. Solver (no SCs yet — just base lattice)
         bumpState();

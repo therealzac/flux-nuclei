@@ -769,7 +769,9 @@ const LIVE_GUARD_REGISTRY = [
     },
     { id: 'T57', name: 'Tracer segments unit-length',
       projected(states) {
-        const tol = 0.05;
+        // Pre-solver: SC edges are ~1.15 before activation+convergence.
+        // Use wide tolerance to allow SC moves but catch teleportation (>1.5).
+        const tol = 0.20;
         const violations = [];
         for (const s of states) {
           if (s.futureNode === s.fromNode) continue;
@@ -783,20 +785,23 @@ const LIVE_GUARD_REGISTRY = [
         }
         return violations.length ? violations : null;
       },
-      check(tick, g, ctx) {
-        if (!ctx.prev) return null;
+      check(tick, g) {
+        // Post-solver: use current pos[] (solver has converged).
+        // Activated edges are ~1.0. Teleportation shows as >> 1.0.
         const tol = 0.05;
-        // Check only THIS tick's move using current solver positions
-        for (const { xon, node: fromNode } of ctx.prev) {
-          if (!xon.alive) continue;
-          const toNode = xon.node;
-          if (toNode === fromNode) continue;
-          const a = pos[fromNode], b = pos[toNode];
+        for (const xon of _demoXons) {
+          if (!xon.alive || xon._dying) continue;
+          if (!xon.trail || xon.trail.length < 2) continue;
+          const fromN = xon.trail[xon.trail.length - 2];
+          const toN = xon.trail[xon.trail.length - 1];
+          if (fromN === toN) continue; // same-node (spawn)
+          const a = pos[fromN], b = pos[toN];
           if (!a || !b) continue;
           const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
           const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+          if (dist < 1e-6) continue;
           if (Math.abs(dist - 1) > tol) {
-            return `tick ${tick}: tracer segment len=${dist.toFixed(4)} (nodes ${fromNode}→${toNode})`;
+            return `tick ${tick}: tracer segment len=${dist.toFixed(4)} (nodes ${fromN}→${toN})`;
           }
         }
         return null;
